@@ -37,13 +37,65 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ====================== STORAGE ======================
-users_data = {}
-all_users = set()
-free_games_posts = []
-daily_free_games = []
-last_daily_reset = datetime.now().date()
+# ====================== STORAGE ====================== 
+users_data = {} 
+all_users = set() 
+free_games_posts = [] 
+daily_free_games = [] 
+last_daily_reset = datetime.now().date() 
 last_action_time = defaultdict(lambda: datetime.min)
+
+# In daily_reset_check function
+def daily_reset_check():
+    global daily_free_games, last_daily_reset, free_games_posts
+    today = datetime.now().date()
+    if today > last_daily_reset:
+        free_games_posts.extend(daily_free_games)
+        daily_free_games = []
+        last_daily_reset = today
+
+# When posting a new game
+if media_file_id or text:
+    daily_free_games.append({
+        "text": text or "Today's Free Games",
+        "media": media_file_id,
+        "media_type": media_type
+    })
+
+# In handle_keyboard function for "🎮 Today's Free Games"
+if text == "🎮 Today's Free Games":
+    access = check_access(user_id)
+    if access == "full":
+        if daily_free_games:
+            for post in reversed(daily_free_games):
+                media = post.get("media")
+                media_type = post.get("media_type")
+                caption = post.get("text", "")
+                if media and media_type == "photo":
+                    bot.send_photo(message.chat.id, media, caption=caption)
+                elif media and media_type == "video":
+                    bot.send_video(message.chat.id, media, caption=caption)
+                else:
+                    bot.send_message(message.chat.id, caption)
+        else:
+            bot.send_message(message.chat.id, "No free games posted today.")
+
+# In handle_keyboard function for "📜 Previous Free Games"
+elif text == "📜 Previous Free Games":
+    if free_games_posts:
+        bot.send_message(message.chat.id, "📜 **Previous Free Games Posts:**", parse_mode="Markdown")
+        for post in reversed(free_games_posts):
+            media = post.get("media")
+            media_type = post.get("media_type")
+            caption = post.get("text", "")
+            if media and media_type == "photo":
+                bot.send_photo(message.chat.id, media, caption=caption)
+            elif media and media_type == "video":
+                bot.send_video(message.chat.id, media, caption=caption)
+            else:
+                bot.send_message(message.chat.id, caption)
+    else:
+        bot.send_message(message.chat.id, "No previous posts yet.")
 
 # ====================== HELPERS ======================
 def is_admin(user_id: int) -> bool:
