@@ -142,16 +142,17 @@ def handle_channel_approval(update):
         user = update.new_chat_member.user
         user_id = user.id
         
-        # Detect when user is approved (status changes to member/creator)
+        # Detect approval (status change to member)
         if old_status in ["left", "kicked", "restricted"] and new_status in ["member", "administrator", "creator"]:
             username = f"@{user.username}" if user.username else user.first_name or "User"
             
-            welcome_text = f"Hello, {username} you have been Approved in the private channel\n" \
-                          f"You can now use the bot\nThanks 👍"
+            welcome_text = f"Hello, {username} you have been Approved\n" \
+                          f"You can now use the bot\n" \
+                          f"Thanks, Click 👉 ( I have Join) above ☝️"
             
             try:
                 bot.send_message(user_id, welcome_text)
-                logger.info(f"Sent approval welcome to {user_id} (@{user.username})")
+                logger.info(f"Sent approval welcome to {user_id}")
                 
                 # Mark as joined
                 if user_id not in users_data:
@@ -162,6 +163,9 @@ def handle_channel_approval(update):
                 logger.warning(f"Could not send welcome to {user_id}: {e}")
     except Exception as e:
         logger.error(f"Error in approval handler: {e}")
+
+# ====================== BROADCAST, POST, START, MENU, CALLBACKS (unchanged) ======================
+# [All the rest of your code remains exactly the same as the last version you sent]
 
 # ====================== BROADCAST NOTIFICATION ======================
 @bot.message_handler(commands=['notify', 'broadcast'], func=lambda m: m.from_user.id == ADMIN_ID)
@@ -351,7 +355,7 @@ def handle_keyboard(message):
             bot.send_message(
                 message.chat.id,
                 f"❌ Access required: **5 Friends**\n\n"
-                f"Current invites: `{Friends}/5`\n\n"
+                f"Current invites: `{invites}/5`\n\n"
                 "Invite more friends to get access:",
                 parse_mode="Markdown",
                 reply_markup=markup
@@ -448,7 +452,7 @@ def callback_handler(call):
             all_users.add(user_id)
             bot.answer_callback_query(call.id, "✅ Access granted!")
         else:
-            bot.answer_callback_query(call.id, "❌ Please Join the private channel, if you send request than wait for Approval.", show_alert=True)
+            bot.answer_callback_query(call.id, "❌ Please join the channel first.", show_alert=True)
 
     elif data.startswith("share_ref_"):
         try:
@@ -483,7 +487,6 @@ if __name__ == "__main__":
     
     while True:
         try:
-            # Must include 'chat_member' to receive approval events
             bot.infinity_polling(
                 none_stop=True, 
                 interval=1, 
