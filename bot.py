@@ -294,7 +294,7 @@ def handle_keyboard(message):
     text = message.text.strip()
     daily_reset_check()
     
-    if text == "🎮 Today's Free Games":
+if text == "🎮 Today's Free Games":
         access = check_access(user_id)
         if access == "full":
             if daily_free_games:
