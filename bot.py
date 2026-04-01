@@ -28,14 +28,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ====================== STORAGE ======================
-users_data = {}                    # user_id → user data (for access system)
-all_users = set()                  # NEW: Track all unique user IDs for notifications
+users_data = {}
+all_users = set()
 free_games_posts = []
 daily_free_games = None
 last_daily_reset = datetime.now().date()
 last_action_time = defaultdict(lambda: datetime.min)
 
 # ====================== HELPERS ======================
+def is_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID
+
 def is_member_of_channel(user_id: int) -> bool:
     if not CHANNEL_ID:
         return True
@@ -45,11 +48,11 @@ def is_member_of_channel(user_id: int) -> bool:
     except:
         return False
 
-
 def get_referral_link(user_id: int) -> str:
     me = bot.get_me()
-    return f"https://t.me/{me.username}?start=ref_{user_id}" if me.username else "Bot username not set!"
-
+    if me.username:
+        return f"https://t.me/{me.username}?start=ref_{user_id}"
+    return "Bot username not set!"
 
 def reset_invites_if_expired(user_id: int):
     if user_id not in users_data:
@@ -61,10 +64,11 @@ def reset_invites_if_expired(user_id: int):
         data["invites"] = 0
         data["last_referral_date"] = None
         data["access_granted_date"] = None
-        logger.info(f"Access expired for user {user_id} after 7 days")
-
 
 def check_access(user_id: int) -> str:
+    if is_admin(user_id):
+        return "full"
+
     reset_invites_if_expired(user_id)
     
     if user_id not in users_data:
@@ -93,14 +97,12 @@ def check_access(user_id: int) -> str:
     data["access_granted_date"] = datetime.now()
     return "full"
 
-
 def anti_spam(user_id: int, cooldown: int = 3) -> bool:
     now = datetime.now()
     if (now - last_action_time[user_id]) < timedelta(seconds=cooldown):
         return False
     last_action_time[user_id] = now
     return True
-
 
 def daily_reset_check():
     global daily_free_games, last_daily_reset
@@ -111,26 +113,23 @@ def daily_reset_check():
         daily_free_games = None
         last_daily_reset = today
 
-
 def get_persistent_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2, is_persistent=True)
     markup.add("🎮 Today's Free Games", "📜 Previous Free Games")
     markup.add("🏆 Referral Leaderboard", "💎 VIP Service")
     return markup
 
-
 # ====================== BROADCAST NOTIFICATION ======================
 @bot.message_handler(commands=['notify', 'broadcast'], func=lambda m: m.from_user.id == ADMIN_ID)
 def send_notification(message):
     daily_reset_check()
     
-    # Get text
+    text = ""
     if message.caption:
         text = message.caption.replace('/notify', '').replace('/broadcast', '').strip()
-    else:
-        text = message.text.replace('/notify', '').replace('/broadcast', '').strip() if message.text else ""
+    elif message.text:
+        text = message.text.replace('/notify', '').replace('/broadcast', '').strip()
     
-    # Get media (photo or video)
     media_file_id = None
     media_type = None
     if message.photo:
@@ -148,11 +147,9 @@ def send_notification(message):
             media_type = "video"
     
     if not text and not media_file_id:
-        bot.reply_to(message, "📌 Usage:\n/notify Your notification message here\n"
-                             "Or attach photo/video + /notify in caption")
+        bot.reply_to(message, "📌 Usage:\n/notify Your message here\nOr attach photo/video + /notify in caption")
         return
     
-    # Send to all users
     success_count = 0
     total = len(all_users)
     
@@ -165,22 +162,75 @@ def send_notification(message):
             else:
                 bot.send_message(user_id, text)
             success_count += 1
-            time.sleep(0.05)  # Avoid hitting Telegram rate limits
+            time.sleep(0.05)
         except Exception as e:
             logger.warning(f"Failed to send notification to {user_id}: {e}")
-            # Optionally remove blocked users: all_users.discard(user_id)
     
     bot.reply_to(message, f"✅ Notification sent to **{success_count}/{total}** users.", parse_mode="Markdown")
 
+# ====================== POST FREE GAMES (FIXED) ======================
+@bot.message_handler(commands=['post'], func=lambda m: m.from_user.id == ADMIN_ID)
+def post_free_games(message):
+    global daily_free_games
+    daily_reset_check()
+    
+    # Get caption text (remove /post command)
+    text = ""
+    if message.caption:
+        text = message.caption.replace('/post', '').strip()
+    elif message.text:
+        text = message.text.replace('/post', '').strip()
+    
+    media_file_id = None
+    media_type = None
+    
+    # Get media from current message or replied message
+    if message.photo:
+        media_file_id = message.photo[-1].file_id
+        media_type = "photo"
+    elif message.video:
+        media_file_id = message.video.file_id
+        media_type = "video"
+    elif message.reply_to_message:
+        if message.reply_to_message.photo:
+            media_file_id = message.reply_to_message.photo[-1].file_id
+            media_type = "photo"
+        elif message.reply_to_message.video:
+            media_file_id = message.reply_to_message.video.file_id
+            media_type = "video"
+    
+    if media_file_id or text:
+        daily_free_games = {
+            "text": text or "Today's Free Games",
+            "media": media_file_id,
+            "media_type": media_type
+        }
+        
+        bot.reply_to(message, f"✅ Today's Free Games saved successfully!\n"
+                             f"Type: {media_type or 'Text only'}\n"
+                             f"Caption: {text[:100]}..." if text else "No caption")
+        
+        # Preview for admin
+        try:
+            if media_file_id and media_type == "photo":
+                bot.send_photo(message.chat.id, media_file_id, caption=text or "Today's Free Games")
+            elif media_file_id and media_type == "video":
+                bot.send_video(message.chat.id, media_file_id, caption=text or "Today's Free Games")
+            else:
+                bot.send_message(message.chat.id, text or "Today's Free Games")
+        except:
+            pass
+    else:
+        bot.reply_to(message, "❌ Nothing to post.\n\n"
+                             "How to post:\n"
+                             "1. Send a photo/video + write /post in the caption\n"
+                             "2. Or reply to a photo/video with /post Your text here")
 
 # ====================== START ======================
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
-    
-    # NEW: Track user for notifications
     all_users.add(user_id)
-    
     daily_reset_check()
     
     # Referral handling (unchanged)
@@ -200,7 +250,7 @@ def start(message):
         except:
             pass
     
-    if user_id not in users_data:
+    if user_id not in users_data and not is_admin(user_id):
         users_data[user_id] = {
             "joined_channel": False,
             "invites": 0,
@@ -210,7 +260,7 @@ def start(message):
     
     access = check_access(user_id)
     
-    if access == "channel":
+    if access == "channel" and not is_admin(user_id):
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(types.InlineKeyboardButton("✅ Join Private Channel", url=CHANNEL_INVITE_LINK))
         markup.add(types.InlineKeyboardButton("🔄 I Have Joined", callback_data="check_channel"))
@@ -218,7 +268,7 @@ def start(message):
         bot.send_message(
             message.chat.id,
             "👋 Welcome to Free Tips Bot!\n\n"
-            "You must Join our private channel,in other to Use me Join below 👇.",
+            "You must Join our private channel to use me. Join below 👇.",
             reply_markup=markup
         )
     else:
@@ -227,53 +277,6 @@ def start(message):
             "✅ Main menu unlocked!\nUse the buttons at the bottom.",
             reply_markup=get_persistent_keyboard()
         )
-
-
-# ====================== POST HANDLER (Photos + Videos) ======================
-@bot.message_handler(commands=['post'], func=lambda m: m.from_user.id == ADMIN_ID)
-def post_free_games(message):
-    global daily_free_games
-    daily_reset_check()
-    
-    if message.caption:
-        text = message.caption.replace('/post', '').strip()
-    else:
-        text = message.text.replace('/post', '').strip() if message.text else ""
-    
-    media_file_id = None
-    media_type = None
-    if message.photo:
-        media_file_id = message.photo[-1].file_id
-        media_type = "photo"
-    elif message.video:
-        media_file_id = message.video.file_id
-        media_type = "video"
-    elif message.reply_to_message:
-        if message.reply_to_message.photo:
-            media_file_id = message.reply_to_message.photo[-1].file_id
-            media_type = "photo"
-        elif message.reply_to_message.video:
-            media_file_id = message.reply_to_message.video.file_id
-            media_type = "video"
-    
-    if text or media_file_id:
-        daily_free_games = {
-            "text": text or "Today's Free Games",
-            "media": media_file_id,
-            "media_type": media_type
-        }
-        bot.reply_to(message, f"✅ Today's Free Games posted! ({media_type or 'text only'})")
-        
-        # Preview
-        if media_file_id and media_type == "photo":
-            bot.send_photo(message.chat.id, media_file_id, caption=text or "Today's Free Games")
-        elif media_file_id and media_type == "video":
-            bot.send_video(message.chat.id, media_file_id, caption=text or "Today's Free Games")
-        else:
-            bot.send_message(message.chat.id, text or "Today's Free Games")
-    else:
-        bot.reply_to(message, "📌 Correct ways:\n1. Attach photo/video + /post in caption\n2. Reply to media with /post text")
-
 
 # ====================== BOTTOM MENU HANDLER ======================
 @bot.message_handler(content_types=['text'])
@@ -306,7 +309,7 @@ def handle_keyboard(message):
             
             ref_link = get_referral_link(user_id)
             markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("🔗 Share to Friends", switch_inline_query=ref_link))
+            markup.add(types.InlineKeyboardButton("🔗 Share to Friends", url=ref_link))
             
             bot.send_message(
                 message.chat.id,
@@ -335,6 +338,7 @@ def handle_keyboard(message):
         else:
             bot.send_message(message.chat.id, "No previous posts yet.")
     
+    # Other buttons unchanged...
     elif text == "🏆 Referral Leaderboard":
         if users_data:
             sorted_list = sorted(users_data.items(), key=lambda x: x[1].get("invites", 0), reverse=True)
@@ -351,7 +355,6 @@ def handle_keyboard(message):
         bot.send_message(message.chat.id, "💎 Want VIP Service?\nContact me for premium access.", 
                         reply_markup=markup)
 
-
 # ====================== CALLBACKS ======================
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
@@ -363,8 +366,9 @@ def callback(call):
     daily_reset_check()
     
     if call.data == "check_channel":
-        if is_member_of_channel(user_id):
-            users_data[user_id]["joined_channel"] = True
+        if is_member_of_channel(user_id) or is_admin(user_id):
+            if not is_admin(user_id):
+                users_data[user_id]["joined_channel"] = True
             bot.edit_message_text(
                 "✅ You have successfully joined the channel!\nMain menu unlocked.",
                 call.message.chat.id, call.message.message_id
@@ -374,22 +378,19 @@ def callback(call):
                 "Use the buttons below to navigate:",
                 reply_markup=get_persistent_keyboard()
             )
-            logger.info(f"User {user_id} joined channel")
-            all_users.add(user_id)  # Also track on callback
+            all_users.add(user_id)
         else:
-            bot.answer_callback_query(call.id, "❌ Please join the channel using the button first 🙏 If you have send Request, then pls wait Small.", show_alert=True)
-
+            bot.answer_callback_query(call.id, "❌ Please join the channel first.", show_alert=True)
 
 # ====================== BOT START ======================
 if __name__ == "__main__":
-    logger.info("🤖 Free Tips Bot starting with 7-day access system + notifications...")
+    logger.info("🤖 Free Tips Bot starting...")
     
     try:
         bot.delete_webhook(drop_pending_updates=True)
         time.sleep(2)
-        logger.info("✅ Webhook removed")
-    except Exception as e:
-        logger.warning(f"Webhook removal: {e}")
+    except:
+        pass
     
     logger.info("🚀 Bot started!")
     
