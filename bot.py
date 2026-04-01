@@ -45,58 +45,6 @@ daily_free_games = []
 last_daily_reset = datetime.now().date() 
 last_action_time = defaultdict(lambda: datetime.min)
 
-# In daily_reset_check function
-def daily_reset_check():
-    global daily_free_games, last_daily_reset, free_games_posts
-    today = datetime.now().date()
-    if today > last_daily_reset:
-        free_games_posts.extend(daily_free_games)
-        daily_free_games = []
-        last_daily_reset = today
-
-# When posting a new game
-if media_file_id or text:
-    daily_free_games.append({
-        "text": text or "Today's Free Games",
-        "media": media_file_id,
-        "media_type": media_type
-    })
-
-# In handle_keyboard function for "🎮 Today's Free Games"
-if text == "🎮 Today's Free Games":
-    access = check_access(user_id)
-    if access == "full":
-        if daily_free_games:
-            for post in reversed(daily_free_games):
-                media = post.get("media")
-                media_type = post.get("media_type")
-                caption = post.get("text", "")
-                if media and media_type == "photo":
-                    bot.send_photo(message.chat.id, media, caption=caption)
-                elif media and media_type == "video":
-                    bot.send_video(message.chat.id, media, caption=caption)
-                else:
-                    bot.send_message(message.chat.id, caption)
-        else:
-            bot.send_message(message.chat.id, "No free games posted today.")
-
-# In handle_keyboard function for "📜 Previous Free Games"
-elif text == "📜 Previous Free Games":
-    if free_games_posts:
-        bot.send_message(message.chat.id, "📜 **Previous Free Games Posts:**", parse_mode="Markdown")
-        for post in reversed(free_games_posts):
-            media = post.get("media")
-            media_type = post.get("media_type")
-            caption = post.get("text", "")
-            if media and media_type == "photo":
-                bot.send_photo(message.chat.id, media, caption=caption)
-            elif media and media_type == "video":
-                bot.send_video(message.chat.id, media, caption=caption)
-            else:
-                bot.send_message(message.chat.id, caption)
-    else:
-        bot.send_message(message.chat.id, "No previous posts yet.")
-
 # ====================== HELPERS ======================
 def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID
@@ -167,15 +115,12 @@ def anti_spam(user_id: int, cooldown: int = 3) -> bool:
     return True
 
 def daily_reset_check():
-    global daily_free_games, last_daily_reset
+    global daily_free_games, last_daily_reset, free_games_posts
     today = datetime.now().date()
     if today > last_daily_reset:
-        if daily_free_games:
-            free_games_posts.append(daily_free_games.copy())
-        daily_free_games = None
-        last_daily_reset = today
-
-def get_persistent_keyboard():
+        free_games_posts.extend(daily_free_games)
+        daily_free_games = []
+        last_daily_reset = ifef get_persistent_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2, is_persistent=True)
     markup.add("🎮 Today's Free Games", "📜 Previous Free Games")
     markup.add("🏆 Referral Leaderboard", "💎 VIP Service")
@@ -262,11 +207,11 @@ def post_free_games(message):
             media_type = "video"
     
     if media_file_id or text:
-        daily_free_games = {
-            "text": text or "Today's Free Games",
-            "media": media_file_id,
-            "media_type": media_type
-        }
+    daily_free_games.append({
+        "text": text or "Today's Free Games",
+        "media": media_file_id,
+        "media_type": media_type
+    })
         
         bot.reply_to(message, f"✅ Today's Free Games saved successfully!\n"
                              f"Type: {media_type or 'Text only'}\n"
