@@ -318,8 +318,8 @@ def handle_keyboard(message):
                 days_left = 7 - (datetime.now() - users_data[user_id]["access_granted_date"]).days
             
             ref_link = get_referral_link(user_id)
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            markup.add(types.InlineKeyboardButton("🔗 Share to Friends", callback_data=f"share_ref_{user_id}"))
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("🔗 Share to Friends", switch_inline_query=ref_link))
             
             bot.send_message(
                 message.chat.id,
@@ -365,55 +365,6 @@ def handle_keyboard(message):
         bot.send_message(message.chat.id, "💎 Want VIP Service?\nContact me for premium access.", 
                         reply_markup=markup)
 
-# ====================== CALLBACKS ======================
-@bot.callback_query_handler(func=lambda call: True)
-def callback(call):
-    user_id = call.from_user.id
-    if not anti_spam(user_id):
-        bot.answer_callback_query(call.id, "⏳ Please wait a moment.", show_alert=True)
-        return
-    
-    daily_reset_check()
-    
-    if call.data == "check_channel":
-        if is_member_of_channel(user_id) or is_admin(user_id):
-            if not is_admin(user_id):
-                users_data[user_id]["joined_channel"] = True
-            bot.edit_message_text(
-                "✅ You have successfully joined the channel!\nMain menu unlocked.",
-                call.message.chat.id, call.message.message_id
-            )
-            bot.send_message(
-                call.message.chat.id,
-                "Use the buttons below to navigate:",
-                reply_markup=get_persistent_keyboard()
-            )
-            all_users.add(user_id)
-        else:
-            bot.answer_callback_query(call.id, "❌ Please join the channel first.", show_alert=True)
-           
-# ====================== SHARE REFERRAL CALLBACK ======================
-@bot.callback_query_handler(func=lambda call: call.data.startswith("share_ref_"))
-def handle_share_referral(call):
-    try:
-        user_id = int(call.data.split("_")[-1])
-        ref_link = get_referral_link(user_id)
-        
-        # Tell user the link is ready
-        bot.answer_callback_query(call.id, "✅ Opening share...", show_alert=False)
-        
-        # Send a clean message with the link (user can forward it easily)
-        bot.send_message(
-            call.message.chat.id,
-            f"🔗 **Your Personal Referral Link**\n\n"
-            f"{ref_link}\n\n"
-            "📤 Tap and hold the link above → **Forward** or **Copy** and send to your friends.\n"
-            "When they join using this link, you get +1 invite!",
-            parse_mode="Markdown",
-            disable_web_page_preview=True
-        )
-    except Exception as e:
-        bot.answer_callback_query(call.id, "❌ Something went wrong", show_alert=True)
 # ====================== BOT START ======================
 if __name__ == "__main__":
     logger.info("🤖 Free Tips Bot starting...")
