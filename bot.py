@@ -351,7 +351,7 @@ def handle_keyboard(message):
             bot.send_message(
                 message.chat.id,
                 f"❌ Access required: **5 Friends**\n\n"
-                f"Current invites: `{invites}/5`\n\n"
+                f"Current invites: `{Friends}/5`\n\n"
                 "Invite more friends to get access:",
                 parse_mode="Markdown",
                 reply_markup=markup
@@ -448,7 +448,7 @@ def callback_handler(call):
             all_users.add(user_id)
             bot.answer_callback_query(call.id, "✅ Access granted!")
         else:
-            bot.answer_callback_query(call.id, "❌ Please join the channel first.", show_alert=True)
+            bot.answer_callback_query(call.id, "❌ Please Join the private channel, if you send request than wait for Approval.", show_alert=True)
 
     elif data.startswith("share_ref_"):
         try:
