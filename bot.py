@@ -306,7 +306,8 @@ def handle_keyboard(message):
             
             ref_link = get_referral_link(user_id)
             markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("🔗 Share to Friends", switch_inline_query=ref_link))
+            text = "Hello 👋 Friends get free games daily on this AI bot and start winning 👇 " + ref_link
+markup.add(types.InlineKeyboardButton("🔗 Share to Friends", url=text))
             
             bot.send_message(
                 message.chat.id,
