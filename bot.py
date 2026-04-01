@@ -207,7 +207,7 @@ def post_free_games(message):
             media_type = "video"
     
     if media_file_id or text:
-    daily_free_games.append({
+        daily_free_games.append({
         "text": text or "Today's Free Games",
         "media": media_file_id,
         "media_type": media_type
