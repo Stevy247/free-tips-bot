@@ -120,7 +120,7 @@ def daily_reset_check():
     if today > last_daily_reset:
         free_games_posts.extend(daily_free_games)
         daily_free_games = []
-        last_daily_reset = ifef get_persistent_keyboard():
+        last_daily_reset = datetime.now().date()
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2, is_persistent=True)
     markup.add("🎮 Today's Free Games", "📜 Previous Free Games")
     markup.add("🏆 Referral Leaderboard", "💎 VIP Service")
