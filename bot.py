@@ -70,7 +70,7 @@ def reset_invites_if_expired(user_id: int):
     data = users_data[user_id]
     now = datetime.now()
     access_date = data.get("access_granted_date")
-    if access_date and (now - access_date)ifta(days=7):
+    if access_date and (now - access_date) > timedelta(days=7):
         data["invites"] = 0
         data["last_referral_date"] = None
         data["access_granted_date"] = None
