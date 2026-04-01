@@ -37,8 +37,8 @@ logger = logging.getLogger(__name__)
 users_data = {}
 all_users = set()
 
-today_free_games = []        # Multiple posts today
-free_games_posts = []        # Previous days archive
+today_free_games = []        # Posts for current day only
+free_games_posts = []        # Archive of previous days
 last_daily_reset = datetime.now().date()
 
 last_action_time = defaultdict(lambda: datetime.min)
@@ -130,7 +130,7 @@ def get_persistent_keyboard():
     markup.add("🏆 Referral Leaderboard", "💎 VIP Service")
     return markup
 
-# ====================== AUTO WELCOME WHEN APPROVED IN CHANNEL ======================
+# ====================== AUTO WELCOME WHEN APPROVED ======================
 @bot.chat_member_handler()
 def handle_channel_approval(update):
     try:
@@ -142,7 +142,6 @@ def handle_channel_approval(update):
         user = update.new_chat_member.user
         user_id = user.id
         
-        # Detect approval (status change to member)
         if old_status in ["left", "kicked", "restricted"] and new_status in ["member", "administrator", "creator"]:
             username = f"@{user.username}" if user.username else user.first_name or "User"
             
@@ -154,7 +153,6 @@ def handle_channel_approval(update):
                 bot.send_message(user_id, welcome_text)
                 logger.info(f"Sent approval welcome to {user_id}")
                 
-                # Mark as joined
                 if user_id not in users_data:
                     users_data[user_id] = {"joined_channel": False, "invites": 0, "last_referral_date": None, "access_granted_date": None}
                 users_data[user_id]["joined_channel"] = True
@@ -163,9 +161,6 @@ def handle_channel_approval(update):
                 logger.warning(f"Could not send welcome to {user_id}: {e}")
     except Exception as e:
         logger.error(f"Error in approval handler: {e}")
-
-# ====================== BROADCAST, POST, START, MENU, CALLBACKS (unchanged) ======================
-# [All the rest of your code remains exactly the same as the last version you sent]
 
 # ====================== BROADCAST NOTIFICATION ======================
 @bot.message_handler(commands=['notify', 'broadcast'], func=lambda m: m.from_user.id == ADMIN_ID)
@@ -320,7 +315,7 @@ def start(message):
             reply_markup=get_persistent_keyboard()
         )
 
-# ====================== BOTTOM MENU HANDLER ======================
+# ====================== BOTTOM MENU HANDLER (FIXED) ======================
 @bot.message_handler(content_types=['text'])
 def handle_keyboard(message):
     user_id = message.from_user.id
@@ -363,11 +358,11 @@ def handle_keyboard(message):
     
     elif text == "📜 Previous Free Games":
         daily_reset_check()
-        if free_games_posts or today_free_games:
+        
+        if free_games_posts:
             bot.send_message(message.chat.id, "📜 **Previous Free Games**", parse_mode="Markdown")
-            if today_free_games:
-                bot.send_message(message.chat.id, "→ **Today's Posts**", parse_mode="Markdown")
-                for post in today_free_games:
+            for day_posts in reversed(free_games_posts[-10:]):
+                for post in day_posts:
                     media = post.get("media")
                     media_type = post.get("media_type")
                     caption = post.get("text", "")
@@ -381,25 +376,8 @@ def handle_keyboard(message):
                         time.sleep(0.4)
                     except:
                         pass
-            if free_games_posts:
-                bot.send_message(message.chat.id, "→ **Older Days**", parse_mode="Markdown")
-                for day_posts in reversed(free_games_posts[-10:]):
-                    for post in day_posts:
-                        media = post.get("media")
-                        media_type = post.get("media_type")
-                        caption = post.get("text", "")
-                        try:
-                            if media and media_type == "photo":
-                                bot.send_photo(message.chat.id, media, caption=caption)
-                            elif media and media_type == "video":
-                                bot.send_video(message.chat.id, media, caption=caption)
-                            else:
-                                bot.send_message(message.chat.id, caption)
-                            time.sleep(0.4)
-                        except:
-                            pass
         else:
-            bot.send_message(message.chat.id, "No previous posts yet.")
+            bot.send_message(message.chat.id, "No previous posts yet.\n\nToday's posts will appear here automatically after 24 hours.")
     
     elif text == "🏆 Referral Leaderboard":
         if users_data:
