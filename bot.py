@@ -331,25 +331,19 @@ if text == "🎮 Today's Free Games":
             )
     
     elif text == "📜 Previous Free Games":
-        if daily_free_games:
-    for post in reversed(daily_free_games):
-        media = post.get("media")
-        media_type = post.get("media_type")
-        caption = post.get("text", "")
-        if media and media_type == "photo":
-            bot.send_photo(message.chat.id, media, caption=caption)
-        elif media and media_type == "video":
-            bot.send_video(message.chat.id, media, caption=caption)
-        else:
-            bot.send_message(message.chat.id, caption)             
-                if media and media_type == "photo":
-                    bot.send_photo(message.chat.id, media, caption=caption)
-                elif media and media_type == "video":
-                    bot.send_video(message.chat.id, media, caption=caption)
-                else:
-                    bot.send_message(message.chat.id, caption)
-        else:
-            bot.send_message(message.chat.id, "No previous posts yet.")
+    if free_games_posts:
+        for post in reversed(free_games_posts):
+            media = post.get("media")
+            media_type = post.get("media_type")
+            caption = post.get("text", "")
+            if media and media_type == "photo":
+                bot.send_photo(message.chat.id, media, caption=caption)
+            elif media and media_type == "video":
+                bot.send_video(message.chat.id, media, caption=caption)
+            else:
+                bot.send_message(message.chat.id, caption)
+    else:
+        bot.send_message(message.chat.id, "No previous posts yet.")
     
     # Other buttons unchanged...
     elif text == "🏆 Referral Leaderboard":
