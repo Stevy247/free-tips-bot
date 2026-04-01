@@ -391,7 +391,7 @@ def callback(call):
         else:
             bot.answer_callback_query(call.id, "❌ Please join the channel first.", show_alert=True)                                          
             # ====================== SHARE REFERRAL CALLBACK ======================
-@botcallback_query_handler(func=lambda call: call.data.startswith("share_ref_"))
+@bot.callback_query_handler(func=lambda call: call.data.startswith("share_ref_"))
 def handle_share_referral(call):
     try:
         user_id = int(call.data.split("_")[-1])
