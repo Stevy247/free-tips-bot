@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 users_data = {}
 all_users = set()
 free_games_posts = []
-daily_free_games = None
+daily_free_games = []
 last_daily_reset = datetime.now().date()
 last_action_time = defaultdict(lambda: datetime.min)
 
