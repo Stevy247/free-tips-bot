@@ -318,8 +318,8 @@ def handle_keyboard(message):
                 days_left = 7 - (datetime.now() - users_data[user_id]["access_granted_date"]).days
             
             ref_link = get_referral_link(user_id)
-            markup = types.InlineKeyboardMarkup()
-            markup.add(types.InlineKeyboardButton("🔗 Share to Friends", url=ref_link))
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            markup.add(types.InlineKeyboardButton("🔗 Share to Friends", callback_data=f"share_ref_{user_id}"))
             
             bot.send_message(
                 message.chat.id,
@@ -391,7 +391,29 @@ def callback(call):
             all_users.add(user_id)
         else:
             bot.answer_callback_query(call.id, "❌ Please join the channel first.", show_alert=True)
-
+           
+# ====================== SHARE REFERRAL CALLBACK ======================
+@bot.callback_query_handler(func=lambda call: call.data.startswith("share_ref_"))
+def handle_share_referral(call):
+    try:
+        user_id = int(call.data.split("_")[-1])
+        ref_link = get_referral_link(user_id)
+        
+        # Tell user the link is ready
+        bot.answer_callback_query(call.id, "✅ Opening share...", show_alert=False)
+        
+        # Send a clean message with the link (user can forward it easily)
+        bot.send_message(
+            call.message.chat.id,
+            f"🔗 **Your Personal Referral Link**\n\n"
+            f"{ref_link}\n\n"
+            "📤 Tap and hold the link above → **Forward** or **Copy** and send to your friends.\n"
+            "When they join using this link, you get +1 invite!",
+            parse_mode="Markdown",
+            disable_web_page_preview=True
+        )
+    except Exception as e:
+        bot.answer_callback_query(call.id, "❌ Something went wrong", show_alert=True)
 # ====================== BOT START ======================
 if __name__ == "__main__":
     logger.info("🤖 Free Tips Bot starting...")
