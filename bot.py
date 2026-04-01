@@ -7,9 +7,19 @@ from telebot import types
 from collections import defaultdict
 
 # ====================== CONFIG ======================
+import os
+
+# === TEMPORARY FOR TESTING ON PHONE ===
 TOKEN = os.getenv("TOKEN")
+
+# If running on phone (Pydroid3), hardcode the token temporarily
 if not TOKEN:
-    raise ValueError("8233280525:AAEBE0aF0_EA0kmI-8KiBT7khackVbsnntw")
+    TOKEN = "8233280525:AAEBE0aF0_EA0kmI-8KiBT7khackVbsnntw"   # ← Paste your real token here
+
+print("TOKEN loaded:", bool(TOKEN))
+
+if not TOKEN:
+    raise ValueError("No TOKEN provided")
 
 # ================== YOUR SETTINGS ==================
 CHANNEL_ID = "-1001775169065"
