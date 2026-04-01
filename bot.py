@@ -9,7 +9,7 @@ from collections import defaultdict
 # ====================== CONFIG ======================
 TOKEN = os.getenv("TOKEN")
 if not TOKEN:
-    raise ValueError("No TOKEN provided")
+    raise ValueError("8233280525:AAEBE0aF0_EA0kmI-8KiBT7khackVbsnntw")
 
 # ================== YOUR SETTINGS ==================
 CHANNEL_ID = "-1001775169065"
