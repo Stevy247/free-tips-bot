@@ -7,17 +7,13 @@ from telebot import types
 from collections import defaultdict
 
 # ====================== CONFIG ======================
-import os
-
-# === TEMPORARY FOR TESTING ON PHONE ===
 TOKEN = os.getenv("TOKEN")
 
-# If running on phone (Pydroid3), hardcode the token temporarily
+# Temporary for testing on phone (Pydroid3)
 if not TOKEN:
-    TOKEN = "8233280525:AAEBE0aF0_EA0kmI-8KiBT7khackVbsnntw"   # ← Paste your real token here
+    TOKEN = "8233280525:AAEBE0aF0_EA0kmI-8KiBT7khackVbsnntw"   # ← Change to your real token in production
 
 print("TOKEN loaded:", bool(TOKEN))
-
 if not TOKEN:
     raise ValueError("No TOKEN provided")
 
@@ -28,6 +24,7 @@ ADMIN_ID = 8258407224
 VIP_USERNAME = "Antonio_Gomez_01"
 
 bot = telebot.TeleBot(TOKEN)
+
 # ====================== LOGGING ======================
 logging.basicConfig(
     level=logging.INFO,
@@ -39,9 +36,12 @@ logger = logging.getLogger(__name__)
 # ====================== STORAGE ======================
 users_data = {}
 all_users = set()
-free_games_posts = []
-daily_free_games = None
+
+# NEW: Support multiple posts per day
+today_free_games = []        # Posts for current day
+free_games_posts = []        # Archive of previous days
 last_daily_reset = datetime.now().date()
+
 last_action_time = defaultdict(lambda: datetime.min)
 
 # ====================== HELPERS ======================
@@ -76,8 +76,8 @@ def reset_invites_if_expired(user_id: int):
 
 def check_access(user_id: int) -> str:
     if is_admin(user_id):
-        return "full"
-
+        return "full"  # Admin always has full access
+    
     reset_invites_if_expired(user_id)
     
     if user_id not in users_data:
@@ -114,12 +114,19 @@ def anti_spam(user_id: int, cooldown: int = 3) -> bool:
     return True
 
 def daily_reset_check():
-    global daily_free_games, last_daily_reset
+    global last_daily_reset
     today = datetime.now().date()
+    
     if today > last_daily_reset:
-        if daily_free_games:
-            free_games_posts.append(daily_free_games.copy())
-        daily_free_games = None
+        # Move today's posts to archive
+        if today_free_games:
+            free_games_posts.append(today_free_games.copy())
+            # Keep only last 30 days to save memory
+            if len(free_games_posts) > 30:
+                free_games_posts.pop(0)
+        
+        # Reset for new day
+        today_free_games.clear()
         last_daily_reset = today
 
 def get_persistent_keyboard():
@@ -177,13 +184,12 @@ def send_notification(message):
     
     bot.reply_to(message, f"✅ Notification sent to **{success_count}/{total}** users.", parse_mode="Markdown")
 
-# ====================== POST FREE GAMES (FIXED) ======================
+# ====================== POST MULTIPLE FREE GAMES ======================
 @bot.message_handler(commands=['post'], func=lambda m: m.from_user.id == ADMIN_ID)
 def post_free_games(message):
-    global daily_free_games
     daily_reset_check()
     
-    # Get caption text (remove /post command)
+    # Extract text
     text = ""
     if message.caption:
         text = message.caption.replace('/post', '').strip()
@@ -193,7 +199,6 @@ def post_free_games(message):
     media_file_id = None
     media_type = None
     
-    # Get media from current message or replied message
     if message.photo:
         media_file_id = message.photo[-1].file_id
         media_type = "photo"
@@ -208,32 +213,35 @@ def post_free_games(message):
             media_file_id = message.reply_to_message.video.file_id
             media_type = "video"
     
-    if media_file_id or text:
-        daily_free_games = {
-            "text": text or "Today's Free Games",
-            "media": media_file_id,
-            "media_type": media_type
-        }
-        
-        bot.reply_to(message, f"✅ Today's Free Games saved successfully!\n"
-                             f"Type: {media_type or 'Text only'}\n"
-                             f"Caption: {text[:100]}..." if text else "No caption")
-        
-        # Preview for admin
-        try:
-            if media_file_id and media_type == "photo":
-                bot.send_photo(message.chat.id, media_file_id, caption=text or "Today's Free Games")
-            elif media_file_id and media_type == "video":
-                bot.send_video(message.chat.id, media_file_id, caption=text or "Today's Free Games")
-            else:
-                bot.send_message(message.chat.id, text or "Today's Free Games")
-        except:
-            pass
-    else:
+    if not media_file_id and not text:
         bot.reply_to(message, "❌ Nothing to post.\n\n"
-                             "How to post:\n"
-                             "1. Send a photo/video + write /post in the caption\n"
-                             "2. Or reply to a photo/video with /post Your text here")
+                             "How to use:\n"
+                             "• Send photo/video + /post in caption\n"
+                             "• Or reply to media with /post + text")
+        return
+    
+    new_post = {
+        "text": text or "Free Tips",
+        "media": media_file_id,
+        "media_type": media_type,
+        "timestamp": datetime.now()
+    }
+    
+    today_free_games.append(new_post)
+    
+    bot.reply_to(message, f"✅ Post saved! Today's total: **{len(today_free_games)}** posts",
+                 parse_mode="Markdown")
+    
+    # Preview for admin
+    try:
+        if media_file_id and media_type == "photo":
+            bot.send_photo(message.chat.id, media_file_id, caption=text)
+        elif media_file_id and media_type == "video":
+            bot.send_video(message.chat.id, media_file_id, caption=text)
+        else:
+            bot.send_message(message.chat.id, text)
+    except:
+        pass
 
 # ====================== START ======================
 @bot.message_handler(commands=['start'])
@@ -242,7 +250,7 @@ def start(message):
     all_users.add(user_id)
     daily_reset_check()
     
-    # Referral handling (unchanged)
+    # Handle referral
     args = message.text.split()
     if len(args) > 1 and args[1].startswith("ref_"):
         try:
@@ -253,7 +261,7 @@ def start(message):
                 users_data[referrer]["last_referral_date"] = datetime.now()
                 
                 if users_data[referrer]["invites"] >= 5 and not users_data[referrer].get("access_granted_date"):
-                    bot.send_message(referrer, "🎉 Congratulations! You now have 7 days access to Today's Free Games!")
+                    bot.send_message(referrer, "🎉 Congratulations! You now have 7 days access!")
                 
                 bot.send_message(referrer, f"🎉 New referral! Total invites: {users_data[referrer]['invites']}/5")
         except:
@@ -297,57 +305,87 @@ def handle_keyboard(message):
     if text == "🎮 Today's Free Games":
         access = check_access(user_id)
         if access == "full":
-            if daily_free_games:
-                media = daily_free_games.get("media")
-                media_type = daily_free_games.get("media_type")
-                caption = daily_free_games.get("text", "")
+            if today_free_games:
+                bot.send_message(message.chat.id, 
+                               f"🎮 **Today's Free Games** ({len(today_free_games)} posts)", 
+                               parse_mode="Markdown")
                 
-                if media and media_type == "photo":
-                    bot.send_photo(message.chat.id, media, caption=caption)
-                elif media and media_type == "video":
-                    bot.send_video(message.chat.id, media, caption=caption)
-                else:
-                    bot.send_message(message.chat.id, caption)
+                for post in today_free_games:   # You can reverse() if you want oldest first
+                    media = post.get("media")
+                    media_type = post.get("media_type")
+                    caption = post.get("text", "")
+                    
+                    try:
+                        if media and media_type == "photo":
+                            bot.send_photo(message.chat.id, media, caption=caption)
+                        elif media and media_type == "video":
+                            bot.send_video(message.chat.id, media, caption=caption)
+                        else:
+                            bot.send_message(message.chat.id, caption)
+                        time.sleep(0.4)
+                    except Exception as e:
+                        logger.warning(f"Failed to send post: {e}")
             else:
-                bot.send_message(message.chat.id, "No daily free games posted yet.")
+                bot.send_message(message.chat.id, "No free games posted today yet.\nUse /post as admin to add some.")
         else:
             invites = users_data.get(user_id, {}).get("invites", 0)
-            days_left = 0
-            if users_data.get(user_id, {}).get("access_granted_date"):
-                days_left = 7 - (datetime.now() - users_data[user_id]["access_granted_date"]).days
-            
-            ref_link = get_referral_link(user_id)
             markup = types.InlineKeyboardMarkup(row_width=1)
             markup.add(types.InlineKeyboardButton("🔗 Share to Friends", callback_data=f"share_ref_{user_id}"))
            
             bot.send_message(
                 message.chat.id,
                 f"❌ Access required: **5 Friends**\n\n"
-                f"Current invites: `{invites}/5`\n"
-                f"Days left: `{days_left if days_left > 0 else 'Expired'}`\n\n"
-                "Invite more friends to reactivate access:",
+                f"Current invites: `{invites}/5`\n\n"
+                "Invite more friends to get access:",
                 parse_mode="Markdown",
                 reply_markup=markup
             )
     
     elif text == "📜 Previous Free Games":
-        if free_games_posts:
-            bot.send_message(message.chat.id, "📜 **Last 6 Free Games Posts:**", parse_mode="Markdown")
-            for post in reversed(free_games_posts[-6:]):
-                media = post.get("media")
-                media_type = post.get("media_type")
-                caption = post.get("text", "")
-                
-                if media and media_type == "photo":
-                    bot.send_photo(message.chat.id, media, caption=caption)
-                elif media and media_type == "video":
-                    bot.send_video(message.chat.id, media, caption=caption)
-                else:
-                    bot.send_message(message.chat.id, caption)
+        daily_reset_check()
+        
+        if free_games_posts or today_free_games:
+            bot.send_message(message.chat.id, "📜 **Previous Free Games**", parse_mode="Markdown")
+            
+            # Today's posts (if any)
+            if today_free_games:
+                bot.send_message(message.chat.id, "→ **Today's Posts**", parse_mode="Markdown")
+                for post in today_free_games:
+                    media = post.get("media")
+                    media_type = post.get("media_type")
+                    caption = post.get("text", "")
+                    try:
+                        if media and media_type == "photo":
+                            bot.send_photo(message.chat.id, media, caption=caption)
+                        elif media and media_type == "video":
+                            bot.send_video(message.chat.id, media, caption=caption)
+                        else:
+                            bot.send_message(message.chat.id, caption)
+                        time.sleep(0.4)
+                    except:
+                        pass
+            
+            # Older archived days
+            if free_games_posts:
+                bot.send_message(message.chat.id, "→ **Older Days**", parse_mode="Markdown")
+                for day_posts in reversed(free_games_posts[-10:]):
+                    for post in day_posts:
+                        media = post.get("media")
+                        media_type = post.get("media_type")
+                        caption = post.get("text", "")
+                        try:
+                            if media and media_type == "photo":
+                                bot.send_photo(message.chat.id, media, caption=caption)
+                            elif media and media_type == "video":
+                                bot.send_video(message.chat.id, media, caption=caption)
+                            else:
+                                bot.send_message(message.chat.id, caption)
+                            time.sleep(0.4)
+                        except:
+                            pass
         else:
             bot.send_message(message.chat.id, "No previous posts yet.")
     
-    # Other buttons unchanged...
     elif text == "🏆 Referral Leaderboard":
         if users_data:
             sorted_list = sorted(users_data.items(), key=lambda x: x[1].get("invites", 0), reverse=True)
@@ -364,53 +402,66 @@ def handle_keyboard(message):
         bot.send_message(message.chat.id, "💎 Want VIP Service?\nContact me for premium access.", 
                         reply_markup=markup)
 
-# ====================== CALLBACKS ======================
+# ====================== CALLBACKS (FIXED) ======================
 @bot.callback_query_handler(func=lambda call: True)
-def callback(call):
+def callback_handler(call):
     user_id = call.from_user.id
-    if not anti_spam(user_id):
-        bot.answer_callback_query(call.id, "⏳ Please wait a moment.", show_alert=True)
+    data = call.data
+
+    if not anti_spam(user_id, cooldown=2):
+        bot.answer_callback_query(call.id, "⏳ Please wait...", show_alert=True)
         return
-    
+
     daily_reset_check()
-    
-    if call.data == "check_channel":
+
+    if data == "check_channel":
         if is_member_of_channel(user_id) or is_admin(user_id):
             if not is_admin(user_id):
+                if user_id not in users_data:
+                    users_data[user_id] = {"joined_channel": False, "invites": 0, "last_referral_date": None, "access_granted_date": None}
                 users_data[user_id]["joined_channel"] = True
-            bot.edit_message_text(
-                "✅ You have successfully joined the channel!\nMain menu unlocked.",
-                call.message.chat.id, call.message.message_id
-            )
+
+            try:
+                bot.edit_message_text(
+                    "✅ You have successfully joined the channel!\n\nMain menu unlocked.",
+                    call.message.chat.id, call.message.message_id,
+                    reply_markup=None
+                )
+            except:
+                pass
+
             bot.send_message(
                 call.message.chat.id,
-                "Use the buttons below to navigate:",
+                "Use the buttons below:",
                 reply_markup=get_persistent_keyboard()
             )
             all_users.add(user_id)
+            bot.answer_callback_query(call.id, "✅ Access granted!")
         else:
-            bot.answer_callback_query(call.id, "❌ Please join the channel first.", show_alert=True)                                          
-            # ====================== SHARE REFERRAL CALLBACK ======================
-@bot.callback_query_handler(func=lambda call: call.data.startswith("share_ref_"))
-def handle_share_referral(call):
-    try:
-        user_id = int(call.data.split("_")[-1])
-        ref_link = get_referral_link(user_id)
-        
-        bot.answer_callback_query(call.id, "✅ Opening share...", show_alert=False)
-        
-        bot.send_message(
-            call.message.chat.id,
-            f"🔗 **Your Personal Referral Link**\n\n"
-            f"{ref_link}\n\n"
-            "📤 Tap and hold the link above → **Forward** or **Copy** and send to your friends.\n"
-            "When they join using this link, you get +1 invite!",
-            parse_mode="Markdown",
-            disable_web_page_preview=True
-        )
-    except Exception as e:
-        bot.answer_callback_query(call.id, "❌ Something went wrong", show_alert=True)
-            
+            bot.answer_callback_query(call.id, "❌ Please join the channel first.", show_alert=True)
+
+    elif data.startswith("share_ref_"):
+        try:
+            target_user_id = int(data.split("_")[-1])
+            ref_link = get_referral_link(target_user_id)
+
+            bot.answer_callback_query(call.id, "✅ Referral link ready")
+
+            bot.send_message(
+                call.message.chat.id,
+                f"🔗 **Your Personal Referral Link**\n\n"
+                f"{ref_link}\n\n"
+                "Long-press → Copy or Forward to friends.\nEach new user = +1 invite!",
+                parse_mode="Markdown",
+                disable_web_page_preview=True
+            )
+        except Exception as e:
+            logger.error(f"Share error: {e}")
+            bot.answer_callback_query(call.id, "❌ Error", show_alert=True)
+
+    else:
+        bot.answer_callback_query(call.id, "Unknown action")
+
 # ====================== BOT START ======================
 if __name__ == "__main__":
     logger.info("🤖 Free Tips Bot starting...")
