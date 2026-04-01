@@ -330,8 +330,8 @@ if text == "🎮 Today's Free Games":
                 reply_markup=markup
             )
     
-    elif text == "📜 Previous Free Games":
-    if free_games_posts:
+ elif text == "📜 Previous Free Games":
+        if free_games_posts:
         for post in reversed(free_games_posts):
             media = post.get("media")
             media_type = post.get("media_type")
@@ -343,8 +343,7 @@ if text == "🎮 Today's Free Games":
             else:
                 bot.send_message(message.chat.id, caption)
     else:
-        bot.send_message(message.chat.id, "No previous posts yet.")
-    
+        bot.send_message(message.chat.id, "No previous posts yet.")if   
     # Other buttons unchanged...
     elif text == "🏆 Referral Leaderboard":
         if users_data:
