@@ -70,7 +70,7 @@ def reset_invites_if_expired(user_id: int):
     data = users_data[user_id]
     now = datetime.now()
     access_date = data.get("access_granted_date")
-    if access_date and (now - access_date) > timedelta(days=7):
+    if access_date and (now - access_date)ifta(days=7):
         data["invites"] = 0
         data["last_referral_date"] = None
         data["access_granted_date"] = None
@@ -268,22 +268,24 @@ def start(message):
     access = check_access(user_id)
     
     if access == "channel" and not is_admin(user_id):
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(types.InlineKeyboardButton("✅ Join Private Channel", url=CHANNEL_INVITE_LINK))
-        markup.add(types.InlineKeyboardButton("🔄 I Have Joined", callback_data="check_channel"))
-        
-        bot.send_message(
-            message.chat.id,
-            "👋 Welcome to Free Tips Bot!\n\n"
-            "You must Join our private channel to use me. Join below 👇.",
-            reply_markup=markup
-        )
-    else:
-        bot.send_message(
-            message.chat.id,
-            "✅ Main menu unlocked!\nUse the buttons at the bottom.",
-            reply_markup=get_persistent_keyboard()
-        )
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(types.InlineKeyboardButton("✅ Join Private Channel", url=CHANNEL_INVITE_LINK))
+    markup.add(types.InlineKeyboardButton("🔄 I Have Joined", callback_data="check_channel"))
+    bot.send_message(
+        message.chat.id,
+        "👋 Welcome to Free Tips Bot!\n\n"
+        "You must Join our private channel to use me. Join below 👇.",
+        reply_markup=markup
+    )
+else:
+    main_markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2, is_persistent=True)
+    main_markup.add("🎮 Today's Free Games", "📜 Previous Free Games")
+    main_markup.add("🏆 Referral Leaderboard", "💎 VIP Service")
+    bot.send_message(
+        message.chat.id,
+        "✅ Main menu unlocked!\nUse the buttons at the bottom.",
+        reply_markup=main_markup
+    )
 
 # ====================== BOTTOM MENU HANDLER ======================
 @bot.message_handler(content_types=['text'])
@@ -329,13 +331,17 @@ def handle_keyboard(message):
             )
     
     elif text == "📜 Previous Free Games":
-        if free_games_posts:
-            bot.send_message(message.chat.id, "📜 **Last 6 Free Games Posts:**", parse_mode="Markdown")
-            for post in reversed(free_games_posts[-6:]):
-                media = post.get("media")
-                media_type = post.get("media_type")
-                caption = post.get("text", "")
-                
+        if daily_free_games:
+    for post in reversed(daily_free_games):
+        media = post.get("media")
+        media_type = post.get("media_type")
+        caption = post.get("text", "")
+        if media and media_type == "photo":
+            bot.send_photo(message.chat.id, media, caption=caption)
+        elif media and media_type == "video":
+            bot.send_video(message.chat.id, media, caption=caption)
+        else:
+            bot.send_message(message.chat.id, caption)             
                 if media and media_type == "photo":
                     bot.send_photo(message.chat.id, media, caption=caption)
                 elif media and media_type == "video":
