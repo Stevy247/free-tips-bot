@@ -267,7 +267,7 @@ def start(message):
     
     access = check_access(user_id)
     
-    if access == "channel" and not is_admin(user_id):
+if access == "channel" and not is_admin(user_id):
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(types.InlineKeyboardButton("✅ Join Private Channel", url=CHANNEL_INVITE_LINK))
     markup.add(types.InlineKeyboardButton("🔄 I Have Joined", callback_data="check_channel"))
