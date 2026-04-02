@@ -295,11 +295,29 @@ def post_free_games(message):
 @bot.message_handler(commands=['win'], func=lambda m: m.from_user.id == ADMIN_ID)
 def post_won_ticket(message):
     try:
-        text = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else "Winning Ticket"
+        # Extract caption (everything after /win)
+        if message.text and len(message.text.split()) > 1:
+            text = message.text.split(maxsplit=1)[1]
+        else:
+            text = "Winning Ticket"   # Default caption if none provided
+
         media = None
         media_type = None
 
-        if message.photo:
+        # Main logic: Check if user replied to a photo/video
+        if message.reply_to_message:
+            replied = message.reply_to_message
+            
+            if replied.photo:
+                media = replied.photo[-1].file_id
+                media_type = "photo"
+            elif replied.video:
+                media = replied.video.file_id
+                media_type = "video"
+            # You can add more types later (e.g. animation, document)
+
+        # Fallback: if someone sends media + /win in the same message
+        elif message.photo:
             media = message.photo[-1].file_id
             media_type = "photo"
         elif message.video:
@@ -307,24 +325,41 @@ def post_won_ticket(message):
             media_type = "video"
 
         if not media:
-            bot.reply_to(message, "❌ **How to post winning ticket:**\n1. Send a photo or video\n2. Reply to it with:\n`/win Your caption here`")
+            bot.reply_to(message, 
+                "❌ **How to post winning ticket:**\n"
+                "1. Send a photo or video\n"
+                "2. **Reply directly to it** with:\n"
+                "`/win Your caption here`")
             return
 
+        # Set expiry date (30 days from now)
         expires_at = datetime.now() + timedelta(days=30)
 
+        # Save to database
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("INSERT INTO won_tickets (media, media_type, text, expires_at) VALUES (%s, %s, %s, %s)",
-                   (media, media_type, text, expires_at))
+        cur.execute(
+            "INSERT INTO won_tickets (media, media_type, text, expires_at) "
+            "VALUES (%s, %s, %s, %s)",
+            (media, media_type, text, expires_at)
+        )
         conn.commit()
         cur.close()
         conn.close()
 
-        won_tickets.insert(0, {"media": media, "media_type": media_type, "text": text})
-        bot.reply_to(message, f"✅ Winning ticket ({media_type}) posted! Expires in 30 days.")
+        # Also add to in-memory list
+        won_tickets.insert(0, {
+            "media": media,
+            "media_type": media_type,
+            "text": text
+        })
+
+        bot.reply_to(message, f"✅ Winning ticket ({media_type}) added successfully!\n"
+                             f"Expires in 30 days. Total active: {len(won_tickets)}")
+
     except Exception as e:
-        logger.error(f"Win error: {e}")
-        bot.reply_to(message, "❌ Error. Send photo/video then reply with /win <caption>")
+        logger.error(f"Win command error: {e}")
+        bot.reply_to(message, "❌ Something went wrong while posting the winning ticket. Please try again.")
 
 # ====================== KEYBOARD HANDLER ======================
 @bot.message_handler(content_types=['text'])
