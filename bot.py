@@ -11,7 +11,7 @@ TOKEN = os.getenv("TOKEN")
 
 # Temporary for testing on phone (Pydroid3)
 if not TOKEN:
-    TOKEN = "8233280525:AAFTq5yGHZJwwoU9iFbEBZGtqM7MVadpASo"   # ← Use env var on Railway
+    TOKEN = "BOT_TOKEN"   # ← Use env var on Railway
 
 print("TOKEN loaded:", bool(TOKEN))
 if not TOKEN:
