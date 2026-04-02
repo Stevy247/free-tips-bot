@@ -7,7 +7,6 @@ from telebot import types
 from collections import defaultdict
 import psycopg2
 from psycopg2.extras import DictCursor
-import traceback
 
 # ====================== CONFIG ======================
 TOKEN = os.getenv("TOKEN")
@@ -84,7 +83,12 @@ def load_data():
         cur.execute("SELECT posts FROM free_games_archive ORDER BY day DESC LIMIT 30")
         free_games_posts = [row['posts'] for row in cur.fetchall()]
 
-        cur.execute("SELECT media, media_type, text FROM won_tickets WHERE expires_at > NOW() ORDER BY created_at DESC")
+        cur.execute("""
+            SELECT media, media_type, text 
+            FROM won_tickets 
+            WHERE expires_at > NOW() 
+            ORDER BY created_at DESC
+        """)
         won_tickets = [dict(row) for row in cur.fetchall()]
 
         return users_data, today_free_games, free_games_posts, won_tickets
@@ -121,8 +125,10 @@ bot_me = bot.get_me()
 BOT_USERNAME = bot_me.username if bot_me else None
 
 # ====================== HELPERS ======================
-def get_referral_link(user_id):
-    return f"https://t.me/{BOT_USERNAME}?start=ref{user_id}" if BOT_USERNAME else "Bot username not set"
+def get_user_referrals(user_id):
+    if user_id in users_data:
+        return users_data[user_id].get("invites", 0)
+    return 0
 
 def is_member_of_channel(user_id):
     try:
@@ -175,13 +181,6 @@ def get_persistent_keyboard():
     markup.add("🏆 Referral Leaderboard", "✅ Won Tickets")
     markup.add("💎 VIP Service 💯")
     return markup
-
-# ====================== NEW FUNCTION: Get Referrals ======================
-def get_user_referrals(user_id):
-    """Return number of successful referrals (invites)"""
-    if user_id in users_data:
-        return users_data[user_id].get("invites", 0)
-    return 0
 
 # ====================== CHANNEL HANDLER ======================
 @bot.chat_member_handler()
@@ -241,25 +240,37 @@ def start(message):
     else:
         bot.send_message(message.chat.id, "✅ Welcome back! Use the menu below.", reply_markup=get_persistent_keyboard())
 
-# ... [All your other admin commands remain the same - /post, /win, /stats, etc.] ...
-
 @bot.message_handler(commands=['post'], func=lambda m: m.from_user.id == ADMIN_ID)
 def post_free_games(message):
     try:
         text = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else ""
-        media = message.photo[-1].file_id if message.photo else message.video.file_id if message.video else None
-        media_type = "photo" if message.photo else "video" if message.video else None
+        media = None
+        media_type = None
+        if message.photo:
+            media = message.photo[-1].file_id
+            media_type = "photo"
+        elif message.video:
+            media = message.video.file_id
+            media_type = "video"
+        
         today_free_games.append({"media": media, "media_type": media_type, "text": text})
         bot.reply_to(message, f"✅ Added to Today's Free Games! Total: {len(today_free_games)}")
-    except:
-        bot.reply_to(message, "❌ Use /post <caption> with photo or video.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: Use /post <caption> with photo or video.")
 
 @bot.message_handler(commands=['win'], func=lambda m: m.from_user.id == ADMIN_ID)
 def post_won_ticket(message):
     try:
         text = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else "Winning Ticket"
-        media = message.photo[-1].file_id if message.photo else message.video.file_id if message.video else None
-        media_type = "photo" if message.photo else "video" if message.video else None
+        media = None
+        media_type = None
+        if message.photo:
+            media = message.photo[-1].file_id
+            media_type = "photo"
+        elif message.video:
+            media = message.video.file_id
+            media_type = "video"
+        
         expires_at = datetime.now() + timedelta(days=30)
 
         conn = get_db_connection()
@@ -271,9 +282,9 @@ def post_won_ticket(message):
         conn.close()
 
         won_tickets.insert(0, {"media": media, "media_type": media_type, "text": text})
-        bot.reply_to(message, "✅ Winning ticket posted! Will auto-delete after 30 days.")
-    except:
-        bot.reply_to(message, "❌ Use /win <caption> with photo or video.")
+        bot.reply_to(message, f"✅ Winning ticket posted! ({media_type or 'text'}) Will expire in 30 days.")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: Use /win <caption> with photo or video.")
 
 # ====================== KEYBOARD HANDLER ======================
 @bot.message_handler(content_types=['text'])
@@ -292,24 +303,24 @@ def handle_keyboard(message):
         if access == "full":
             if today_free_games:
                 bot.send_message(message.chat.id, f"🎮 **Today's Free Games** ({len(today_free_games)})", parse_mode="Markdown")
-                
                 for post in today_free_games:
-                    if post.get("media_type") == "photo":
-                        bot.send_photo(message.chat.id, post["media"], caption=post.get("text"))
-                    elif post.get("media_type") == "video":
-                        bot.send_video(message.chat.id, post["media"], caption=post.get("text"))
-                    else:
-                        bot.send_message(message.chat.id, post.get("text"))
-                    time.sleep(0.5)
+                    try:
+                        if post.get("media_type") == "photo" and post.get("media"):
+                            bot.send_photo(message.chat.id, post["media"], caption=post.get("text"))
+                        elif post.get("media_type") == "video" and post.get("media"):
+                            bot.send_video(message.chat.id, post["media"], caption=post.get("text"))
+                        else:
+                            bot.send_message(message.chat.id, post.get("text") or "🎮 Free Game")
+                        time.sleep(0.5)
+                    except Exception as e:
+                        logger.error(f"Failed to send today's game: {e}")
+                        bot.send_message(message.chat.id, "⚠️ Could not display this post.")
             else:
                 bot.send_message(message.chat.id, "No free games today yet.")
         
         else:
-            # === UPDATED LOGIC AS REQUESTED ===
             current_referrals = get_user_referrals(user_id)
-            needed = 5 - current_referrals
-            if needed < 1:
-                needed = 1
+            needed = max(5 - current_referrals, 1)
 
             message_text = (
                 "❌ You don't have full access yet.\n\n"
@@ -318,7 +329,6 @@ def handle_keyboard(message):
                 f"🔜 You still need: **{needed}** more friend{'' if needed == 1 else 's'}"
             )
 
-            # Share button
             markup = types.InlineKeyboardMarkup(row_width=1)
             share_button = types.InlineKeyboardButton(
                 text="🔗 Share with Friends",
@@ -326,24 +336,23 @@ def handle_keyboard(message):
             )
             markup.add(share_button)
 
-            bot.send_message(
-                message.chat.id,
-                message_text,
-                parse_mode="Markdown",
-                reply_markup=markup
-            )
+            bot.send_message(message.chat.id, message_text, parse_mode="Markdown", reply_markup=markup)
 
     elif text == "✅ Won Tickets":
         if won_tickets:
             bot.send_message(message.chat.id, f"✅ **Won Tickets** ({len(won_tickets)} active)", parse_mode="Markdown")
             for post in won_tickets:
-                if post.get("media_type") == "photo":
-                    bot.send_photo(message.chat.id, post["media"], caption=post.get("text", "Winning Ticket"))
-                elif post.get("media_type") == "video":
-                    bot.send_video(message.chat.id, post["media"], caption=post.get("text", "Winning Ticket"))
-                else:
-                    bot.send_message(message.chat.id, post.get("text", "Winning Ticket"))
-                time.sleep(0.5)
+                try:
+                    if post.get("media_type") == "photo" and post.get("media"):
+                        bot.send_photo(message.chat.id, post["media"], caption=post.get("text", "Winning Ticket"))
+                    elif post.get("media_type") == "video" and post.get("media"):
+                        bot.send_video(message.chat.id, post["media"], caption=post.get("text", "Winning Ticket"))
+                    else:
+                        bot.send_message(message.chat.id, post.get("text", "Winning Ticket"))
+                    time.sleep(0.5)
+                except Exception as e:
+                    logger.error(f"Failed to send won ticket: {e}")
+                    bot.send_message(message.chat.id, "⚠️ Could not display this ticket.")
         else:
             bot.send_message(message.chat.id, "No winning tickets yet.")
 
@@ -352,13 +361,16 @@ def handle_keyboard(message):
             bot.send_message(message.chat.id, "📜 **Previous Free Games**", parse_mode="Markdown")
             for day_posts in free_games_posts[:5]:
                 for post in day_posts:
-                    if post.get("media_type") == "photo":
-                        bot.send_photo(message.chat.id, post["media"], caption=post.get("text"))
-                    elif post.get("media_type") == "video":
-                        bot.send_video(message.chat.id, post["media"], caption=post.get("text"))
-                    else:
-                        bot.send_message(message.chat.id, post.get("text"))
-                    time.sleep(0.4)
+                    try:
+                        if post.get("media_type") == "photo" and post.get("media"):
+                            bot.send_photo(message.chat.id, post["media"], caption=post.get("text"))
+                        elif post.get("media_type") == "video" and post.get("media"):
+                            bot.send_video(message.chat.id, post["media"], caption=post.get("text"))
+                        else:
+                            bot.send_message(message.chat.id, post.get("text"))
+                        time.sleep(0.4)
+                    except:
+                        pass
         else:
             bot.send_message(message.chat.id, "No previous games yet.")
 
