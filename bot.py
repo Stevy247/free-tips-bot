@@ -7,24 +7,18 @@ from telebot import types
 from collections import defaultdict
 import psycopg2
 from psycopg2.extras import DictCursor
-import json
+import traceback
 
 # ====================== CONFIG ======================
 TOKEN = os.getenv("TOKEN")
-
-# Temporary for testing (remove or use env var on Railway)
 if not TOKEN:
-    TOKEN = "8493101678:AAE7SAk1bIIfQyk7OnWS8e2uAWYrdF6f88k"
-
-print("TOKEN loaded:", bool(TOKEN))
-if not TOKEN:
-    raise ValueError("No TOKEN provided")
+    TOKEN = "8493101678:AAE7SAk1bIIfQyk7OnWS8e2uAWYrdF6f88k"   # Remove after testing
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable is required!")
 
-# ================== YOUR SETTINGS ==================
+# ================== SETTINGS ==================
 CHANNEL_ID = "-1001775169065"
 CHANNEL_INVITE_LINK = "https://t.me/+NzZ2mbPo9_02MDk8"
 ADMIN_ID = 8258407224
@@ -33,91 +27,71 @@ VIP_USERNAME = "Antonio_Gomez_01"
 bot = telebot.TeleBot(TOKEN)
 
 # ====================== LOGGING ======================
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.FileHandler("bot.log", encoding="utf-8"), logging.StreamHandler()]
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# ====================== POSTGRES CONNECTION ======================
+# ====================== DATABASE ======================
 def get_db_connection():
-    return psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
+    return psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor, connect_timeout=10)
 
 def init_db():
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        # Users table
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id BIGINT PRIMARY KEY,
-                joined_channel BOOLEAN DEFAULT FALSE,
-                invites INTEGER DEFAULT 0,
-                last_referral_date TIMESTAMP,
-                access_granted_date TIMESTAMP
-            );
-        """)
+        cur.execute("""CREATE TABLE IF NOT EXISTS users (
+            user_id BIGINT PRIMARY KEY,
+            joined_channel BOOLEAN DEFAULT FALSE,
+            invites INTEGER DEFAULT 0,
+            last_referral_date TIMESTAMP,
+            access_granted_date TIMESTAMP
+        );""")
         
-        # Free games archive
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS free_games_archive (
-                id SERIAL PRIMARY KEY,
-                day DATE,
-                posts JSONB,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
+        cur.execute("""CREATE TABLE IF NOT EXISTS today_free_games (
+            id SERIAL PRIMARY KEY, media TEXT, media_type TEXT, text TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );""")
         
-        # Today's free games (simple)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS today_free_games (
-                id SERIAL PRIMARY KEY,
-                media TEXT,
-                media_type TEXT,
-                text TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
+        cur.execute("""CREATE TABLE IF NOT EXISTS free_games_archive (
+            id SERIAL PRIMARY KEY, day DATE, posts JSONB, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );""")
+        
+        cur.execute("""CREATE TABLE IF NOT EXISTS won_tickets (
+            id SERIAL PRIMARY KEY,
+            media TEXT,
+            media_type TEXT,
+            text TEXT,
+            expires_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );""")
         
         conn.commit()
         logger.info("✅ Database initialized successfully")
     except Exception as e:
-        logger.error(f"Database init error: {e}")
+        logger.error(f"DB Init Error: {e}")
     finally:
         cur.close()
         conn.close()
 
-# Load data from DB
 def load_data():
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        # Load users
         cur.execute("SELECT * FROM users")
-        users = {}
-        for row in cur.fetchall():
-            users[row['user_id']] = {
-                "joined_channel": row['joined_channel'],
-                "invites": row['invites'],
-                "last_referral_date": row['last_referral_date'],
-                "access_granted_date": row['access_granted_date']
-            }
-        
-        # Load today's games
+        users_data = {row['user_id']: dict(row) for row in cur.fetchall()}
+
         cur.execute("SELECT media, media_type, text FROM today_free_games ORDER BY id")
-        today_games = [dict(row) for row in cur.fetchall()]
-        
-        # Load archive
+        today_free_games = [dict(row) for row in cur.fetchall()]
+
         cur.execute("SELECT posts FROM free_games_archive ORDER BY day DESC LIMIT 30")
-        archive = [row['posts'] for row in cur.fetchall()]
-        
-        return users, today_games, archive
+        free_games_posts = [row['posts'] for row in cur.fetchall()]
+
+        cur.execute("SELECT media, media_type, text FROM won_tickets WHERE expires_at > NOW() ORDER BY created_at DESC")
+        won_tickets = [dict(row) for row in cur.fetchall()]
+
+        return users_data, today_free_games, free_games_posts, won_tickets
     finally:
         cur.close()
         conn.close()
 
-# Save user data
 def save_user(user_id, data):
     conn = get_db_connection()
     cur = conn.cursor()
@@ -130,13 +104,8 @@ def save_user(user_id, data):
                 invites = EXCLUDED.invites,
                 last_referral_date = EXCLUDED.last_referral_date,
                 access_granted_date = EXCLUDED.access_granted_date
-        """, (
-            user_id,
-            data.get("joined_channel", False),
-            data.get("invites", 0),
-            data.get("last_referral_date"),
-            data.get("access_granted_date")
-        ))
+        """, (user_id, data.get("joined_channel"), data.get("invites"),
+              data.get("last_referral_date"), data.get("access_granted_date")))
         conn.commit()
     finally:
         cur.close()
@@ -144,59 +113,301 @@ def save_user(user_id, data):
 
 # ====================== INITIALIZE ======================
 init_db()
-users_data, today_free_games, free_games_posts = load_data()
-all_users = set(users_data.keys())
+users_data, today_free_games, free_games_posts, won_tickets = load_data()
 last_daily_reset = datetime.now().date()
 last_action_time = defaultdict(lambda: datetime.min)
 
 bot_me = bot.get_me()
-BOT_USERNAME = bot_me.username if bot_me and bot_me.username else None
-print("🔍 Current bot username:", BOT_USERNAME)
+BOT_USERNAME = bot_me.username if bot_me else None
 
-# ====================== HELPER FUNCTIONS ======================
-def get_referral_link(user_id: int) -> str:
-    if not BOT_USERNAME:
-        return "Bot username not set!"
-    return f"https://t.me/{BOT_USERNAME}?start=ref{user_id}"
+# ====================== HELPERS ======================
+def get_referral_link(user_id):
+    return f"https://t.me/{BOT_USERNAME}?start=ref{user_id}" if BOT_USERNAME else "Bot username not set"
 
-def reset_invites_if_expired(user_id: int):
-    if user_id not in users_data:
-        return
-    data = users_data[user_id]
+def is_member_of_channel(user_id):
+    try:
+        member = bot.get_chat_member(CHANNEL_ID, user_id)
+        return member.status in ["member", "administrator", "creator"]
+    except:
+        return False
+
+def anti_spam(user_id, cooldown=3):
     now = datetime.now()
-    access_date = data.get("access_granted_date")
-    if access_date and (now - access_date) > timedelta(days=7):
-        data["invites"] = 0
-        data["last_referral_date"] = None
-        data["access_granted_date"] = None
-        save_user(user_id, data)
+    if (now - last_action_time[user_id]) < timedelta(seconds=cooldown):
+        return False
+    last_action_time[user_id] = now
+    return True
 
-# (Rest of your functions like check_access, is_member_of_channel, etc. remain almost the same)
+def clean_expired_won_tickets():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM won_tickets WHERE expires_at <= NOW()")
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
 
-def check_access(user_id: int) -> str:
+def daily_reset_check():
+    global last_daily_reset
+    today = datetime.now().date()
+    if today > last_daily_reset:
+        if today_free_games:
+            conn = get_db_connection()
+            cur = conn.cursor()
+            try:
+                cur.execute("INSERT INTO free_games_archive (day, posts) VALUES (%s, %s::jsonb)", 
+                           (last_daily_reset, today_free_games))
+                conn.commit()
+                free_games_posts.insert(0, today_free_games[:])
+                if len(free_games_posts) > 30:
+                    free_games_posts.pop()
+            finally:
+                cur.close()
+                conn.close()
+            bot.send_message(ADMIN_ID, f"✅ Daily reset completed. {len(today_free_games)} posts archived.")
+        today_free_games.clear()
+        last_daily_reset = today
+
+def get_persistent_keyboard():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2, is_persistent=True)
+    markup.add("🎮 Today's Free Games", "📜 Previous Free Games")
+    markup.add("🏆 Referral Leaderboard", "✅ Won Tickets")
+    markup.add("💎 VIP Service 💯")
+    return markup
+
+# ====================== CHANNEL HANDLER ======================
+@bot.chat_member_handler()
+def handle_channel_update(update):
+    try:
+        if str(update.chat.id) != CHANNEL_ID:
+            return
+        user = update.new_chat_member.user
+        user_id = user.id
+        status = update.new_chat_member.status
+
+        if status in ["member", "administrator", "creator"]:
+            if user_id not in users_data:
+                users_data[user_id] = {"joined_channel": True, "invites": 0, "last_referral_date": None, "access_granted_date": None}
+            else:
+                users_data[user_id]["joined_channel"] = True
+            save_user(user_id, users_data[user_id])
+
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("✅ I Have Joined", callback_data="check_channel"))
+            bot.send_message(user_id, f"Hello 👋 {user.first_name}, you have been Approved!\n\nClick 👉 I have Joined ☝️", reply_markup=markup)
+
+        elif status in ["left", "kicked"]:
+            if user_id in users_data:
+                users_data[user_id]["joined_channel"] = False
+                save_user(user_id, users_data[user_id])
+                bot.send_message(user_id, "❌ You left the channel. Your access has been revoked.\nPlease rejoin the channel to continue.")
+    except Exception as e:
+        logger.error(f"Channel handler error: {e}")
+
+# ====================== COMMANDS ======================
+@bot.message_handler(commands=['start'])
+def start(message):
+    user_id = message.from_user.id
+    daily_reset_check()
+    access = check_access(user_id)
+
+    # Referral
+    args = message.text.split()
+    if len(args) > 1 and args[1].startswith("ref"):
+        try:
+            referrer_id = int(args[1][3:])
+            if referrer_id != user_id and referrer_id in users_data:
+                data = users_data[referrer_id]
+                data["invites"] += 1
+                data["last_referral_date"] = datetime.now()
+                save_user(referrer_id, data)
+                bot.send_message(referrer_id, f"🎉 New referral! Total invites: {data['invites']}/5")
+        except:
+            pass
+
+    if access == "channel":
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(types.InlineKeyboardButton("✅ Join Private Channel", url=CHANNEL_INVITE_LINK))
+        markup.add(types.InlineKeyboardButton("🔄 I Have Joined", callback_data="check_channel"))
+        bot.send_message(message.chat.id, "👋 Welcome!\nYou must join our private channel first.", reply_markup=markup)
+    else:
+        bot.send_message(message.chat.id, "✅ Welcome back! Use the menu below.", reply_markup=get_persistent_keyboard())
+
+@bot.message_handler(commands=['post'], func=lambda m: m.from_user.id == ADMIN_ID)
+def post_free_games(message):
+    try:
+        text = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else ""
+        media = message.photo[-1].file_id if message.photo else message.video.file_id if message.video else None
+        media_type = "photo" if message.photo else "video" if message.video else None
+        today_free_games.append({"media": media, "media_type": media_type, "text": text})
+        bot.reply_to(message, f"✅ Added to Today's Free Games! Total: {len(today_free_games)}")
+    except:
+        bot.reply_to(message, "❌ Use /post <caption> with photo or video.")
+
+@bot.message_handler(commands=['win'], func=lambda m: m.from_user.id == ADMIN_ID)
+def post_won_ticket(message):
+    try:
+        text = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else "Winning Ticket"
+        media = message.photo[-1].file_id if message.photo else message.video.file_id if message.video else None
+        media_type = "photo" if message.photo else "video" if message.video else None
+        expires_at = datetime.now() + timedelta(days=30)
+
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("INSERT INTO won_tickets (media, media_type, text, expires_at) VALUES (%s, %s, %s, %s)",
+                   (media, media_type, text, expires_at))
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        won_tickets.insert(0, {"media": media, "media_type": media_type, "text": text})
+        bot.reply_to(message, "✅ Winning ticket posted! Will auto-delete after 30 days.")
+    except:
+        bot.reply_to(message, "❌ Use /win <caption> with photo or video.")
+
+@bot.message_handler(commands=['todayposts'], func=lambda m: m.from_user.id == ADMIN_ID)
+def show_today_posts(message):
+    if not today_free_games:
+        bot.reply_to(message, "No posts today.")
+        return
+    txt = "📋 **Today's Posts**\n\n"
+    for i, p in enumerate(today_free_games, 1):
+        txt += f"{i}. {p.get('media_type','text')} - {p.get('text','')[:50]}...\n"
+    bot.reply_to(message, txt, parse_mode="Markdown")
+
+@bot.message_handler(commands=['delete'], func=lambda m: m.from_user.id == ADMIN_ID)
+def delete_post(message):
+    try:
+        num = int(message.text.split()[1])
+        if 1 <= num <= len(today_free_games):
+            today_free_games.pop(num-1)
+            bot.reply_to(message, f"✅ Post #{num} deleted.")
+        else:
+            bot.reply_to(message, "Invalid number.")
+    except:
+        bot.reply_to(message, "Usage: /delete <number>")
+
+@bot.message_handler(commands=['clear_today'], func=lambda m: m.from_user.id == ADMIN_ID)
+def clear_today(message):
+    today_free_games.clear()
+    bot.reply_to(message, "✅ All today's posts cleared.")
+
+@bot.message_handler(commands=['notify','broadcast'], func=lambda m: m.from_user.id == ADMIN_ID)
+def broadcast(message):
+    try:
+        text = message.text.split(maxsplit=1)[1]
+        count = 0
+        for uid in list(users_data.keys()):
+            try:
+                bot.send_message(uid, text)
+                count += 1
+                time.sleep(0.05)
+            except:
+                pass
+        bot.reply_to(message, f"✅ Sent to {count} users.")
+    except:
+        bot.reply_to(message, "Usage: /notify Your message")
+
+@bot.message_handler(commands=['stats'], func=lambda m: m.from_user.id == ADMIN_ID)
+def stats(message):
+    total = len(users_data)
+    joined = sum(1 for u in users_data.values() if u.get("joined_channel"))
+    bot.reply_to(message, f"📊 Stats:\nTotal Users: {total}\nJoined Channel: {joined}")
+
+# ====================== KEYBOARD HANDLER ======================
+@bot.message_handler(content_types=['text'])
+def handle_keyboard(message):
+    user_id = message.from_user.id
+    text = message.text.strip()
+    daily_reset_check()
+    clean_expired_won_tickets()
+
+    if not anti_spam(user_id):
+        return
+
+    access = check_access(user_id)
+
+    if text == "🎮 Today's Free Games":
+        if access == "full":
+            if today_free_games:
+                bot.send_message(message.chat.id, f"🎮 **Today's Free Games** ({len(today_free_games)})", parse_mode="Markdown")
+                for post in today_free_games:
+                    if post.get("media_type") == "photo":
+                        bot.send_photo(message.chat.id, post["media"], caption=post.get("text"))
+                    elif post.get("media_type") == "video":
+                        bot.send_video(message.chat.id, post["media"], caption=post.get("text"))
+                    else:
+                        bot.send_message(message.chat.id, post.get("text"))
+                    time.sleep(0.5)
+            else:
+                bot.send_message(message.chat.id, "No free games today yet.")
+        else:
+            bot.send_message(message.chat.id, "❌ You don't have full access yet.")
+
+    elif text == "✅ Won Tickets":
+        if won_tickets:
+            bot.send_message(message.chat.id, f"✅ **Won Tickets** ({len(won_tickets)} active)", parse_mode="Markdown")
+            for post in won_tickets:
+                if post.get("media_type") == "photo":
+                    bot.send_photo(message.chat.id, post["media"], caption=post.get("text", "Winning Ticket"))
+                elif post.get("media_type") == "video":
+                    bot.send_video(message.chat.id, post["media"], caption=post.get("text", "Winning Ticket"))
+                else:
+                    bot.send_message(message.chat.id, post.get("text", "Winning Ticket"))
+                time.sleep(0.5)
+        else:
+            bot.send_message(message.chat.id, "No winning tickets yet.")
+
+    elif text == "📜 Previous Free Games":
+        if free_games_posts:
+            bot.send_message(message.chat.id, "📜 **Previous Free Games**", parse_mode="Markdown")
+            for day_posts in free_games_posts[:5]:
+                for post in day_posts:
+                    if post.get("media_type") == "photo":
+                        bot.send_photo(message.chat.id, post["media"], caption=post.get("text"))
+                    elif post.get("media_type") == "video":
+                        bot.send_video(message.chat.id, post["media"], caption=post.get("text"))
+                    else:
+                        bot.send_message(message.chat.id, post.get("text"))
+                    time.sleep(0.4)
+        else:
+            bot.send_message(message.chat.id, "No previous games yet.")
+
+    elif text == "🏆 Referral Leaderboard":
+        sorted_users = sorted(users_data.items(), key=lambda x: x[1].get("invites", 0), reverse=True)
+        lb = "🏆 **Top Referrers**\n\n"
+        for i, (uid, data) in enumerate(sorted_users[:15], 1):
+            lb += f"{i}. User `{uid}` — **{data.get('invites', 0)}** invites\n"
+        bot.send_message(message.chat.id, lb, parse_mode="Markdown")
+
+    elif text == "💎 VIP Service 💯":
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("💬 Contact Admin", url=f"https://t.me/{VIP_USERNAME}"))
+        bot.send_message(message.chat.id, "💎 Want VIP Service?\nContact Admin for premium access.", reply_markup=markup)
+
+# ====================== CALLBACKS ======================
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    user_id = call.from_user.id
+    if call.data == "check_channel":
+        if is_member_of_channel(user_id):
+            users_data[user_id]["joined_channel"] = True
+            save_user(user_id, users_data[user_id])
+            bot.send_message(call.message.chat.id, "✅ Access granted!", reply_markup=get_persistent_keyboard())
+        else:
+            bot.answer_callback_query(call.id, "❌ You have not joined yet.", show_alert=True)
+
+# ====================== ACCESS CHECK ======================
+def check_access(user_id):
     if user_id == ADMIN_ID:
         return "full"
-
-    reset_invites_if_expired(user_id)
-
     if user_id not in users_data:
-        users_data[user_id] = {
-            "joined_channel": False,
-            "invites": 0,
-            "last_referral_date": None,
-            "access_granted_date": None
-        }
+        users_data[user_id] = {"joined_channel": False, "invites": 0, "last_referral_date": None, "access_granted_date": None}
         save_user(user_id, users_data[user_id])
-
     data = users_data[user_id]
-
-    if not is_member_of_channel(user_id):
-        data["joined_channel"] = False
-        save_user(user_id, data)
-
-    if not data["joined_channel"]:
+    if not data.get("joined_channel"):
         return "channel"
-
     if data.get("access_granted_date"):
         if (datetime.now() - data["access_granted_date"]) <= timedelta(days=7):
             return "full"
@@ -204,31 +415,16 @@ def check_access(user_id: int) -> str:
             data["invites"] = 0
             data["access_granted_date"] = None
             save_user(user_id, data)
-
     if data["invites"] >= 5:
         data["access_granted_date"] = datetime.now()
         save_user(user_id, data)
         return "full"
-
     return "invites"
-
-# Keep your other functions (anti_spam, daily_reset_check, etc.)
-# Just make sure to call save_user() whenever you modify users_data[user_id]
 
 # ====================== BOT START ======================
 if __name__ == "__main__":
-    logger.info("🤖 Free Tips AI Bot starting with PostgreSQL...")
+    logger.info("🤖 Bot started with all features including Won Tickets...")
     try:
-        bot.delete_webhook(drop_pending_updates=True)
-    except:
-        pass
-
-    logger.info("🚀 Bot started successfully!")
-    
-    while True:
-        try:
-            bot.infinity_polling(none_stop=True, interval=1, timeout=30,
-                                allowed_updates=['message', 'callback_query', 'chat_member'])
-        except Exception as e:
-            logger.error(f"Polling error: {e}")
-            time.sleep(10)
+        bot.infinity_polling(none_stop=True, allowed_updates=['message', 'callback_query', 'chat_member'])
+    except Exception as e:
+        logger.error(f"Critical error: {e}\n{traceback.format_exc()}")
