@@ -240,13 +240,32 @@ def start(message):
         bot.send_message(message.chat.id, "✅ Welcome back! Use the menu below.", reply_markup=get_persistent_keyboard())
 
 @bot.message_handler(commands=['post'], func=lambda m: m.from_user.id == ADMIN_ID)
+@bot.message_handler(commands=['post'], func=lambda m: m.from_user.id == ADMIN_ID)
 def post_free_games(message):
     try:
-        text = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else ""
+        # Extract caption (everything after /post)
+        if message.text and len(message.text.split()) > 1:
+            text = message.text.split(maxsplit=1)[1]
+        else:
+            text = ""
+
         media = None
         media_type = None
 
-        if message.photo:
+        # Check if this is a reply to a media message
+        if message.reply_to_message:
+            replied = message.reply_to_message
+            
+            if replied.photo:
+                media = replied.photo[-1].file_id
+                media_type = "photo"
+            elif replied.video:
+                media = replied.video.file_id
+                media_type = "video"
+            # You can add more types if needed: document, animation, etc.
+
+        # Fallback: if someone sends photo + /post in same message (rare)
+        elif message.photo:
             media = message.photo[-1].file_id
             media_type = "photo"
         elif message.video:
@@ -254,14 +273,24 @@ def post_free_games(message):
             media_type = "video"
 
         if not media:
-            bot.reply_to(message, "❌ **How to post:**\n1. Send a photo or video\n2. Reply to it with:\n`/post Your caption here`")
+            bot.reply_to(message, 
+                "❌ **How to post:**\n"
+                "1. Send a photo or video\n"
+                "2. **Reply directly to it** with:\n"
+                "`/post Your caption here`")
             return
 
-        today_free_games.append({"media": media, "media_type": media_type, "text": text})
+        today_free_games.append({
+            "media": media, 
+            "media_type": media_type, 
+            "text": text
+        })
+
         bot.reply_to(message, f"✅ Added **{media_type}** to Today's Free Games! Total: {len(today_free_games)}")
+
     except Exception as e:
         logger.error(f"Post error: {e}")
-        bot.reply_to(message, "❌ Error. Send photo/video then reply with /post <caption>")
+        bot.reply_to(message, "❌ Something went wrong. Try again.")
 
 @bot.message_handler(commands=['win'], func=lambda m: m.from_user.id == ADMIN_ID)
 def post_won_ticket(message):
