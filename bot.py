@@ -9,6 +9,9 @@ from collections import defaultdict
 # ====================== CONFIG ======================
 TOKEN = os.getenv("TOKEN")
 
+# Temporary for testing on phone (Pydroid3)
+if not TOKEN:
+    TOKEN = = "8493101678:AAAE7SAk1bIIfQyk7OnWS8e2uAWYrdF6f88k"   # ← Use env var on Railway
 print("TOKEN loaded:", bool(TOKEN))
 if not TOKEN:
     raise ValueError("No TOKEN provided")
