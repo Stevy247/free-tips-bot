@@ -57,9 +57,9 @@ def is_member_of_channel(user_id: int) -> bool:
         return False
 
 def get_referral_link(user_id: int) -> str:
-    if not BOT_USERNAME:
-        return "Bot username not set!"
-    return f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
+    me = bot.get_me()
+    if me.username:
+        return f"https://t.me/{me.username}?start=ref_{user_id}"
 
 def reset_invites_if_expired(user_id: int):
     if user_id not in users_data:
