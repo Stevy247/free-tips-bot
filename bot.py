@@ -175,6 +175,64 @@ def daily_reset_check():
         today_free_games.clear()
         last_daily_reset = today
 
+def notify_all_users_about_new_game():
+    """Send notification to ALL bot users when a new free game is posted"""
+    if not today_free_games:
+        return
+
+    notified = 0
+    skipped = 0
+
+    for user_id in list(users_data.keys()):
+        if user_id == ADMIN_ID:
+            continue
+
+        try:
+            # Get user's first name safely
+            try:
+                chat = bot.get_chat(user_id)
+                first_name = chat.first_name or "there"
+            except:
+                first_name = "there"
+
+            message_text = (
+                f"Hello 👋 {first_name},\n\n"
+                f"A Free games has just been posted.\n"
+                f"Click on **Today's Free Games** button to see it 🤝"
+            )
+
+            # Inline button
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("🎮 Today's Free Games", callback_data="open_today_games"))
+
+            bot.send_message(
+                user_id,
+                message_text,
+                parse_mode="Markdown",
+                reply_markup=markup
+            )
+
+            notified += 1
+            time.sleep(0.15)  # Safe rate limit delay
+
+        except Exception as e:
+            skipped += 1
+            logger.warning(f"Could not notify user {user_id}: {str(e)[:100]}")
+
+    logger.info(f"📢 New game notification sent to {notified} users (skipped {skipped})")
+
+    # Summary for admin
+    try:
+        bot.send_message(
+            ADMIN_ID,
+            f"✅ New game posted successfully!\n"
+            f"📢 Notification sent to **{notified}** users\n"
+            f"⚠️ Skipped: {skipped}",
+            parse_mode="Markdown"
+        )
+    except:
+        pass
+
 def get_persistent_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2, is_persistent=True)
     markup.add("🎮 Today's Free Games", "📜 Previous Free Games")
@@ -240,10 +298,9 @@ def start(message):
         bot.send_message(message.chat.id, "✅ Welcome back! Use the menu below.", reply_markup=get_persistent_keyboard())
 
 @bot.message_handler(commands=['post'], func=lambda m: m.from_user.id == ADMIN_ID)
-@bot.message_handler(commands=['post'], func=lambda m: m.from_user.id == ADMIN_ID)
 def post_free_games(message):
     try:
-        # Extract caption (everything after /post)
+        # Extract caption
         if message.text and len(message.text.split()) > 1:
             text = message.text.split(maxsplit=1)[1]
         else:
@@ -262,9 +319,7 @@ def post_free_games(message):
             elif replied.video:
                 media = replied.video.file_id
                 media_type = "video"
-            # You can add more types if needed: document, animation, etc.
 
-        # Fallback: if someone sends photo + /post in same message (rare)
         elif message.photo:
             media = message.photo[-1].file_id
             media_type = "photo"
@@ -288,6 +343,9 @@ def post_free_games(message):
 
         bot.reply_to(message, f"✅ Added **{media_type}** to Today's Free Games! Total: {len(today_free_games)}")
 
+        # === NOTIFY ALL USERS ===
+        notify_all_users_about_new_game()
+
     except Exception as e:
         logger.error(f"Post error: {e}")
         bot.reply_to(message, "❌ Something went wrong. Try again.")
@@ -295,28 +353,22 @@ def post_free_games(message):
 @bot.message_handler(commands=['win'], func=lambda m: m.from_user.id == ADMIN_ID)
 def post_won_ticket(message):
     try:
-        # Extract caption (everything after /win)
         if message.text and len(message.text.split()) > 1:
             text = message.text.split(maxsplit=1)[1]
         else:
-            text = "Winning Ticket"   # Default caption if none provided
+            text = "Winning Ticket"
 
         media = None
         media_type = None
 
-        # Main logic: Check if user replied to a photo/video
         if message.reply_to_message:
             replied = message.reply_to_message
-            
             if replied.photo:
                 media = replied.photo[-1].file_id
                 media_type = "photo"
             elif replied.video:
                 media = replied.video.file_id
                 media_type = "video"
-            # You can add more types later (e.g. animation, document)
-
-        # Fallback: if someone sends media + /win in the same message
         elif message.photo:
             media = message.photo[-1].file_id
             media_type = "photo"
@@ -332,10 +384,8 @@ def post_won_ticket(message):
                 "`/win Your caption here`")
             return
 
-        # Set expiry date (30 days from now)
         expires_at = datetime.now() + timedelta(days=30)
 
-        # Save to database
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute(
@@ -347,7 +397,6 @@ def post_won_ticket(message):
         cur.close()
         conn.close()
 
-        # Also add to in-memory list
         won_tickets.insert(0, {
             "media": media,
             "media_type": media_type,
@@ -413,8 +462,6 @@ def handle_keyboard(message):
 
             bot.send_message(message.chat.id, message_text, parse_mode="Markdown", reply_markup=markup)
 
-    # ... (the rest of your keyboard handler remains the same - Won Tickets, Previous Games, etc.)
-
     elif text == "✅ Won Tickets":
         if won_tickets:
             bot.send_message(message.chat.id, f"✅ **Won Tickets** ({len(won_tickets)} active)", parse_mode="Markdown")
@@ -467,6 +514,7 @@ def handle_keyboard(message):
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     user_id = call.from_user.id
+    
     if call.data == "check_channel":
         if is_member_of_channel(user_id):
             users_data[user_id]["joined_channel"] = True
@@ -474,6 +522,21 @@ def callback_handler(call):
             bot.send_message(call.message.chat.id, "✅ Access granted!", reply_markup=get_persistent_keyboard())
         else:
             bot.answer_callback_query(call.id, "❌ You have not joined yet.", show_alert=True)
+
+    elif call.data == "open_today_games":
+        bot.answer_callback_query(call.id)
+        # Simulate keyboard button press
+        temp_message = types.Message(
+            message_id=0,
+            from_user=call.from_user,
+            chat=call.message.chat,
+            date=datetime.now(),
+            content_type='text',
+            options={},
+            json_string=""
+        )
+        temp_message.text = "🎮 Today's Free Games"
+        handle_keyboard(temp_message)
 
 # ====================== ACCESS CHECK ======================
 def check_access(user_id):
