@@ -56,10 +56,14 @@ def is_member_of_channel(user_id: int) -> bool:
     except:
         return False
 
+# At the top level, right after creating the bot instance
+bot_me = bot.get_me()
+BOT_USERNAME = bot_me.username if bot_me and bot_me.username else None
+
 def get_referral_link(user_id: int) -> str:
-    me = bot.get_me()
-    if me.username:
-        return f"https://t.me/{me.username}?start=ref_{user_id}"
+    if not BOT_USERNAME:
+        return "Bot username not set! Please set it in @BotFather."
+    return f"https://t.me/{BOT_USERNAME}?start=ref_{user_id}"
 
 def reset_invites_if_expired(user_id: int):
     if user_id not in users_data:
