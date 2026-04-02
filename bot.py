@@ -218,7 +218,6 @@ def start(message):
     daily_reset_check()
     access = check_access(user_id)
 
-    # Referral handling
     args = message.text.split()
     if len(args) > 1 and args[1].startswith("ref"):
         try:
@@ -240,12 +239,10 @@ def start(message):
     else:
         bot.send_message(message.chat.id, "✅ Welcome back! Use the menu below.", reply_markup=get_persistent_keyboard())
 
-@@bot.message_handler(commands=['post'], func=lambda m: m.from_user.id == ADMIN_ID)
+@bot.message_handler(commands=['post'], func=lambda m: m.from_user.id == ADMIN_ID)
 def post_free_games(message):
     try:
-        # Get caption if provided
         text = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else ""
-
         media = None
         media_type = None
 
@@ -257,21 +254,19 @@ def post_free_games(message):
             media_type = "video"
 
         if not media:
-            bot.reply_to(message, "❌ Please **attach a photo or video** and then reply to it with:\n`/post Your caption here`")
+            bot.reply_to(message, "❌ **How to post:**\n1. Send a photo or video\n2. Reply to it with:\n`/post Your caption here`")
             return
 
         today_free_games.append({"media": media, "media_type": media_type, "text": text})
-        
-        bot.reply_to(message, f"✅ Successfully added **{media_type}** to Today's Free Games!\nTotal posts today: {len(today_free_games)}")
-        
+        bot.reply_to(message, f"✅ Added **{media_type}** to Today's Free Games! Total: {len(today_free_games)}")
     except Exception as e:
-        bot.reply_to(message, "❌ Error. Send a photo/video first, then reply with /post <caption>")
+        logger.error(f"Post error: {e}")
+        bot.reply_to(message, "❌ Error. Send photo/video then reply with /post <caption>")
 
 @bot.message_handler(commands=['win'], func=lambda m: m.from_user.id == ADMIN_ID)
 def post_won_ticket(message):
     try:
         text = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else "Winning Ticket"
-
         media = None
         media_type = None
 
@@ -283,7 +278,7 @@ def post_won_ticket(message):
             media_type = "video"
 
         if not media:
-            bot.reply_to(message, "❌ Please **attach a photo or video** and then reply to it with:\n`/win Your caption here`")
+            bot.reply_to(message, "❌ **How to post winning ticket:**\n1. Send a photo or video\n2. Reply to it with:\n`/win Your caption here`")
             return
 
         expires_at = datetime.now() + timedelta(days=30)
@@ -297,10 +292,10 @@ def post_won_ticket(message):
         conn.close()
 
         won_tickets.insert(0, {"media": media, "media_type": media_type, "text": text})
-        bot.reply_to(message, f"✅ Winning ticket ({media_type}) posted successfully! Expires in 30 days.")
-        
+        bot.reply_to(message, f"✅ Winning ticket ({media_type}) posted! Expires in 30 days.")
     except Exception as e:
-        bot.reply_to(message, "❌ Error. Send a photo/video first, then reply with /win <caption>")
+        logger.error(f"Win error: {e}")
+        bot.reply_to(message, "❌ Error. Send photo/video then reply with /win <caption>")
 
 # ====================== KEYBOARD HANDLER ======================
 @bot.message_handler(content_types=['text'])
@@ -353,6 +348,8 @@ def handle_keyboard(message):
             markup.add(share_button)
 
             bot.send_message(message.chat.id, message_text, parse_mode="Markdown", reply_markup=markup)
+
+    # ... (the rest of your keyboard handler remains the same - Won Tickets, Previous Games, etc.)
 
     elif text == "✅ Won Tickets":
         if won_tickets:
