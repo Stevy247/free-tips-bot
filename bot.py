@@ -265,7 +265,17 @@ def handle_channel_update(update):
             if user_id in users_data:
                 users_data[user_id]["joined_channel"] = False
                 save_user(user_id, users_data[user_id])
-                bot.send_message(user_id, "❌ You left the channel. Your access has been revoked.\nPlease rejoin the channel to continue.")
+                
+                # Updated revocation message with Join button
+                markup = types.InlineKeyboardMarkup()
+                markup.add(types.InlineKeyboardButton("🔄 Join Channel Again", url=CHANNEL_INVITE_LINK))
+                
+                bot.send_message(
+                    user_id, 
+                    "❌ You left the channel. Your access has been revoked.\n\n"
+                    "Please rejoin the channel to continue.",
+                    reply_markup=markup
+                )
     except Exception as e:
         logger.error(f"Channel handler error: {e}")
 
