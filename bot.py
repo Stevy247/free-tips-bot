@@ -57,26 +57,40 @@ def is_member_of_channel(user_id: int) -> bool:
         return False
 
 # At the top level, after creating the bot (keep this part)
-# === PLACE THIS RIGHT AFTER YOU CREATE THE bot INSTANCE ===
+# === REFERRAL SYSTEM - PUT THIS RIGHT AFTER CREATING YOUR bot INSTANCE ===
+# (Usually near the top of your main file, after bot = Bot(token=...) )
+
 bot_me = bot.get_me()
 BOT_USERNAME = bot_me.username if bot_me and bot_me.username else None
 
-print("🔍 Current bot username:", BOT_USERNAME)   # ← Add this for debugging
+print("🔍 Current bot username from Telegram:", BOT_USERNAME)   # Debugging - check this in console
 
 def get_referral_link(user_id: int) -> str:
     if not BOT_USERNAME:
         return "Bot username not set! Please set it in @BotFather."
     
-    referral_code = f"ref{user_id}"
-    bot_link = f"https://t.me/{BOT_USERNAME}?start={referral_code}"
+    # Simple, clean and reliable referral link
+    return f"https://t.me/{BOT_USERNAME}?start=ref{user_id}"
+
+# === HOW TO SHOW THE REFERRAL LINK TO USERS ===
+# Example function you can call in your /start or referral button handler
+async def send_referral_link(update, context):
+    user_id = update.effective_user.id
+    referral_link = get_referral_link(user_id)
     
-    share_text = f"Get free games daily! 🔥 98% Predictions 👇\n\nJoin with my referral:\n{bot_link}"
+    text = (
+        "🔥 Your Personal Referral Link:\n\n"
+        f"{referral_link}\n\n"
+        "📌 Share this link with your friends.\n"
+        "When a new user clicks it, starts the bot and joins → you get +1 invite.\n\n"
+        "You currently have 0/5 invites.\n"
+        "Invite 5 friends to unlock Today's Free Games! 🎮"
+    )
     
-    import urllib.parse
-    encoded_url = urllib.parse.quote(bot_link)
-    encoded_text = urllib.parse.quote(share_text)
-    
-    return f"https://t.me/share/url?url={encoded_url}&text={encoded_text}"
+    await update.message.reply_text(
+        text, 
+        disable_web_page_preview=True
+    )
 
 def reset_invites_if_expired(user_id: int):
     if user_id not in users_data:
