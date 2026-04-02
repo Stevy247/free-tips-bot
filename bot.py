@@ -57,25 +57,26 @@ def is_member_of_channel(user_id: int) -> bool:
         return False
 
 # At the top level, after creating the bot (keep this part)
+# === PLACE THIS RIGHT AFTER YOU CREATE THE bot INSTANCE ===
 bot_me = bot.get_me()
 BOT_USERNAME = bot_me.username if bot_me and bot_me.username else None
+
+print("🔍 Current bot username:", BOT_USERNAME)   # ← Add this for debugging
 
 def get_referral_link(user_id: int) -> str:
     if not BOT_USERNAME:
         return "Bot username not set! Please set it in @BotFather."
     
-    # This version opens the Share menu directly when clicked
-    referral_code = f"ref{user_id}"   # clean format: ref123456789
-    link = f"https://t.me/{BOT_USERNAME}?start={referral_code}"
+    referral_code = f"ref{user_id}"
+    bot_link = f"https://t.me/{BOT_USERNAME}?start={referral_code}"
     
-    # The magic: share URL that opens Telegram's share sheet with pre-filled message + your referral link
-    share_text = f"Join me and get free games/tips! Use my referral link 👇\n\n{link}"
+    share_text = f"Get free games daily! 🔥 98% Predictions 👇\n\nJoin with my referral:\n{bot_link}"
     
-    # URL-encode the text (important!)
     import urllib.parse
+    encoded_url = urllib.parse.quote(bot_link)
     encoded_text = urllib.parse.quote(share_text)
     
-    return f"https://t.me/share/url?url={urllib.parse.quote(link)}&text={encoded_text}"
+    return f"https://t.me/share/url?url={encoded_url}&text={encoded_text}"
 
 def reset_invites_if_expired(user_id: int):
     if user_id not in users_data:
