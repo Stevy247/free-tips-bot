@@ -423,8 +423,14 @@ def check_access(user_id):
 
 # ====================== BOT START ======================
 if __name__ == "__main__":
-    logger.info("🤖 Bot started with all features including Won Tickets...")
+    logger.info("🤖 Bot starting with all features...")
     try:
-        bot.infinity_polling(none_stop=True, allowed_updates=['message', 'callback_query', 'chat_member'])
+        bot.delete_webhook(drop_pending_updates=True)   # Important line
+        logger.info("Webhook cleared successfully")
+        
+        bot.infinity_polling(none_stop=True, 
+                            allowed_updates=['message', 'callback_query', 'chat_member'],
+                            timeout=30,
+                            long_polling_timeout=30)
     except Exception as e:
-        logger.error(f"Critical error: {e}\n{traceback.format_exc()}")
+        logger.error(f"Critical error: {e}")
