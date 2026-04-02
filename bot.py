@@ -329,21 +329,51 @@ def handle_keyboard(message):
     access = check_access(user_id)
 
     if text == "🎮 Today's Free Games":
-        if access == "full":
-            if today_free_games:
-                bot.send_message(message.chat.id, f"🎮 **Today's Free Games** ({len(today_free_games)})", parse_mode="Markdown")
-                for post in today_free_games:
-                    if post.get("media_type") == "photo":
-                        bot.send_photo(message.chat.id, post["media"], caption=post.get("text"))
-                    elif post.get("media_type") == "video":
-                        bot.send_video(message.chat.id, post["media"], caption=post.get("text"))
-                    else:
-                        bot.send_message(message.chat.id, post.get("text"))
-                    time.sleep(0.5)
-            else:
-                bot.send_message(message.chat.id, "No free games today yet.")
+    if access == "full":
+        if today_free_games:
+            bot.send_message(message.chat.id, f"🎮 **Today's Free Games** ({len(today_free_games)})", parse_mode="Markdown")
+            for post in today_free_games:
+                if post.get("media_type") == "photo":
+                    bot.send_photo(message.chat.id, post["media"], caption=post.get("text"))
+                elif post.get("media_type") == "video":
+                    bot.send_video(message.chat.id, post["media"], caption=post.get("text"))
+                else:
+                    bot.send_message(message.chat.id, post.get("text"))
+                time.sleep(0.5)
         else:
-            bot.send_message(message.chat.id, "❌ You don't have full access yet.")
+            bot.send_message(message.chat.id, "No free games today yet.")
+    
+    else:
+        # New logic for users without full access
+        current_referrals = get_user_referrals(message.from_user.id)  # ← You need to implement this function
+        
+        needed = 5 - current_referrals
+        if needed < 1:
+            needed = 1  # safety
+        
+        message_text = (
+            "❌ You don't have full access yet.\n\n"
+            f"You need **5 friends** to get access to Free Games.\n\n"
+            f"👥 Friends referred so far: **{current_referrals}**\n"
+            f"🔜 You still need: **{needed}** more friend{'' if needed == 1 else 's'}"
+        )
+        
+        # Create inline keyboard with Share button
+        from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+        
+        markup = InlineKeyboardMarkup(row_width=1)
+        share_button = InlineKeyboardButton(
+            text="🔗 Share with Friends",
+            url=f"https://t.me/share/url?url={bot.get_me().username}&text=Join%20me%20on%20this%20cool%20bot%20and%20we%20both%20get%20free%20games!%20%F0%9F%8E%AE"
+        )
+        markup.add(share_button)
+        
+        bot.send_message(
+            message.chat.id, 
+            message_text, 
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
 
     elif text == "✅ Won Tickets":
         if won_tickets:
