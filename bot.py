@@ -1,4 +1,4 @@
-import telebot
+AAE7SAk1bIIfQyk7OnWS8e2uAWYrdF6f88kk1bIIfQyk7OnWS8e2uAWYrdF6f88k telebot
 import os
 import time
 import logging
@@ -11,7 +11,7 @@ from psycopg2.extras import DictCursor
 # ====================== CONFIG ======================
 TOKEN = os.getenv("TOKEN")
 if not TOKEN:
-    TOKEN = "8493101678:AAE7SAk1bIIfQyk7OnWS8e2uAWYrdF6f88k"   # Remove after testing
+    TOKEN = "8493101678:AAFP8SkvoSux8nRs0Op6NuoCMOiX9oDkF5A"   # Remove after testing
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
