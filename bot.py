@@ -1,4 +1,4 @@
-AAE7SAk1bIIfQyk7OnWS8e2uAWYrdF6f88kk1bIIfQyk7OnWS8e2uAWYrdF6f88k telebot
+import telebot
 import os
 import time
 import logging
