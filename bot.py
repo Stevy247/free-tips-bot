@@ -2,11 +2,12 @@ import telebot
 import os
 import time
 import logging
+import json
 from datetime import datetime, timedelta
 from telebot import types
 from collections import defaultdict
 import psycopg2
-from psycopg2.extras import DictCursor
+from psycopg2.extras import DictCursor, Json
 
 # ====================== CONFIG ======================
 TOKEN = os.getenv("TOKEN")
@@ -41,6 +42,8 @@ def init_db():
             user_id BIGINT PRIMARY KEY,
             joined_channel BOOLEAN DEFAULT FALSE,
             invites INTEGER DEFAULT 0,
+            valid_invites INTEGER DEFAULT 0,
+            referred_by BIGINT,
             last_referral_date TIMESTAMP,
             access_granted_date TIMESTAMP
         );""")
@@ -50,7 +53,10 @@ def init_db():
         );""")
         
         cur.execute("""CREATE TABLE IF NOT EXISTS free_games_archive (
-            id SERIAL PRIMARY KEY, day DATE, posts JSONB, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            id SERIAL PRIMARY KEY, 
+            day DATE UNIQUE, 
+            posts JSONB, 
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );""")
         
         cur.execute("""CREATE TABLE IF NOT EXISTS won_tickets (
@@ -74,15 +80,23 @@ def load_data():
     conn = get_db_connection()
     cur = conn.cursor()
     try:
+        # Load users
         cur.execute("SELECT * FROM users")
         users_data = {row['user_id']: dict(row) for row in cur.fetchall()}
 
+        # Load today's free games
         cur.execute("SELECT media, media_type, text FROM today_free_games ORDER BY id")
         today_free_games = [dict(row) for row in cur.fetchall()]
 
-        cur.execute("SELECT posts FROM free_games_archive ORDER BY day DESC LIMIT 30")
+        # Load ALL archived previous games (sorted by day DESC)
+        cur.execute("""
+            SELECT day, posts 
+            FROM free_games_archive 
+            ORDER BY day DESC
+        """)
         free_games_posts = [row['posts'] for row in cur.fetchall()]
 
+        # Load active won tickets
         cur.execute("""
             SELECT media, media_type, text 
             FROM won_tickets 
@@ -91,6 +105,7 @@ def load_data():
         """)
         won_tickets = [dict(row) for row in cur.fetchall()]
 
+        logger.info(f"✅ Loaded {len(free_games_posts)} archived days and {len(today_free_games)} today's games")
         return users_data, today_free_games, free_games_posts, won_tickets
     finally:
         cur.close()
@@ -101,14 +116,17 @@ def save_user(user_id, data):
     cur = conn.cursor()
     try:
         cur.execute("""
-            INSERT INTO users (user_id, joined_channel, invites, last_referral_date, access_granted_date)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO users (user_id, joined_channel, invites, valid_invites, referred_by, last_referral_date, access_granted_date)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (user_id) DO UPDATE SET
                 joined_channel = EXCLUDED.joined_channel,
                 invites = EXCLUDED.invites,
+                valid_invites = EXCLUDED.valid_invites,
+                referred_by = EXCLUDED.referred_by,
                 last_referral_date = EXCLUDED.last_referral_date,
                 access_granted_date = EXCLUDED.access_granted_date
-        """, (user_id, data.get("joined_channel"), data.get("invites"),
+        """, (user_id, data.get("joined_channel"), data.get("invites", 0),
+              data.get("valid_invites", 0), data.get("referred_by"),
               data.get("last_referral_date"), data.get("access_granted_date")))
         conn.commit()
     finally:
@@ -127,7 +145,7 @@ BOT_USERNAME = bot_me.username if bot_me else None
 # ====================== HELPERS ======================
 def get_user_referrals(user_id):
     if user_id in users_data:
-        return users_data[user_id].get("invites", 0)
+        return users_data[user_id].get("valid_invites", 0)
     return 0
 
 def is_member_of_channel(user_id):
@@ -162,21 +180,32 @@ def daily_reset_check():
             conn = get_db_connection()
             cur = conn.cursor()
             try:
-                cur.execute("INSERT INTO free_games_archive (day, posts) VALUES (%s, %s::jsonb)", 
-                           (last_daily_reset, today_free_games))
+                # Save today's games to archive (using Json adapter for safety)
+                cur.execute("""
+                    INSERT INTO free_games_archive (day, posts) 
+                    VALUES (%s, %s)
+                    ON CONFLICT (day) DO UPDATE SET posts = EXCLUDED.posts
+                """, (last_daily_reset, Json(today_free_games)))
+                
                 conn.commit()
+                
+                # Add to in-memory list (newest first)
                 free_games_posts.insert(0, today_free_games[:])
-                if len(free_games_posts) > 30:
-                    free_games_posts.pop()
+                
+                logger.info(f"✅ Archived {len(today_free_games)} posts for {last_daily_reset}")
+                bot.send_message(ADMIN_ID, f"✅ Daily reset completed. {len(today_free_games)} posts archived.")
+            except Exception as e:
+                logger.error(f"Archive error: {e}")
             finally:
                 cur.close()
                 conn.close()
-            bot.send_message(ADMIN_ID, f"✅ Daily reset completed. {len(today_free_games)} posts archived.")
+        
         today_free_games.clear()
         last_daily_reset = today
 
+# ... (notify_all_users_about_new_game, get_persistent_keyboard remain the same as previous version)
+
 def notify_all_users_about_new_game():
-    """Send notification to ALL bot users when a new free game is posted"""
     if not today_free_games:
         return
 
@@ -188,7 +217,6 @@ def notify_all_users_about_new_game():
             continue
 
         try:
-            # Get user's first name safely
             try:
                 chat = bot.get_chat(user_id)
                 first_name = chat.first_name or "there"
@@ -201,7 +229,6 @@ def notify_all_users_about_new_game():
                 f"Click on **Today's Free Games** button to see it 🤝"
             )
 
-            # Inline button
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton("🎮 Today's Free Games", callback_data="open_today_games"))
 
@@ -213,15 +240,13 @@ def notify_all_users_about_new_game():
             )
 
             notified += 1
-            time.sleep(0.15)  # Safe rate limit delay
-
+            time.sleep(0.15)
         except Exception as e:
             skipped += 1
             logger.warning(f"Could not notify user {user_id}: {str(e)[:100]}")
 
     logger.info(f"📢 New game notification sent to {notified} users (skipped {skipped})")
 
-    # Summary for admin
     try:
         bot.send_message(
             ADMIN_ID,
@@ -241,45 +266,87 @@ def get_persistent_keyboard():
     return markup
 
 # ====================== CHANNEL HANDLER ======================
+# (Keep the same improved channel handler from the previous full code I sent you)
+
 @bot.chat_member_handler()
 def handle_channel_update(update):
     try:
         if str(update.chat.id) != CHANNEL_ID:
             return
+
         user = update.new_chat_member.user
         user_id = user.id
         status = update.new_chat_member.status
 
+        if user_id not in users_data:
+            users_data[user_id] = {
+                "joined_channel": False,
+                "invites": 0,
+                "valid_invites": 0,
+                "referred_by": None,
+                "last_referral_date": None,
+                "access_granted_date": None
+            }
+
+        data = users_data[user_id]
+
         if status in ["member", "administrator", "creator"]:
-            if user_id not in users_data:
-                users_data[user_id] = {"joined_channel": True, "invites": 0, "last_referral_date": None, "access_granted_date": None}
-            else:
-                users_data[user_id]["joined_channel"] = True
-            save_user(user_id, users_data[user_id])
+            was_joined = data.get("joined_channel", False)
+            data["joined_channel"] = True
+
+            if not was_joined and data.get("referred_by"):
+                referrer_id = data["referred_by"]
+                if referrer_id in users_data:
+                    ref_data = users_data[referrer_id]
+                    ref_data["valid_invites"] = ref_data.get("valid_invites", 0) + 1
+                    ref_data["last_referral_date"] = datetime.now()
+                    save_user(referrer_id, ref_data)
+                    bot.send_message(referrer_id, 
+                        f"🎉 New valid referral! Total: {ref_data['valid_invites']}/5")
+
+            save_user(user_id, data)
 
             markup = types.InlineKeyboardMarkup()
             markup.add(types.InlineKeyboardButton("✅ I Have Joined", callback_data="check_channel"))
             bot.send_message(user_id, f"Hello 👋 {user.first_name}, you have been Approved!\n\nClick 👉 I have Joined ☝️", reply_markup=markup)
 
         elif status in ["left", "kicked"]:
-            if user_id in users_data:
-                users_data[user_id]["joined_channel"] = False
-                save_user(user_id, users_data[user_id])
-                
-                # Updated revocation message with Join button
-                markup = types.InlineKeyboardMarkup()
-                markup.add(types.InlineKeyboardButton("🔄 Join Channel Again", url=CHANNEL_INVITE_LINK))
-                
-                bot.send_message(
-                    user_id, 
-                    "❌ You left the channel. Your access has been revoked.\n\n"
-                    "Please rejoin the channel to continue.",
-                    reply_markup=markup
-                )
+            data["joined_channel"] = False
+
+            if data.get("referred_by"):
+                referrer_id = data["referred_by"]
+                if referrer_id in users_data:
+                    ref_data = users_data[referrer_id]
+                    old_count = ref_data.get("valid_invites", 0)
+                    new_count = max(0, old_count - 1)
+                    ref_data["valid_invites"] = new_count
+                    save_user(referrer_id, ref_data)
+
+                    needed = max(5 - new_count, 0)
+                    bot.send_message(
+                        referrer_id,
+                        f"❌ One of your referrals has left the channel.\n\n"
+                        f"You now have **{new_count}/5** valid invites.\n"
+                        f"You need **{needed}** more friend{'' if needed == 1 else 's'} for full access.",
+                        parse_mode="Markdown"
+                    )
+
+            save_user(user_id, data)
+
+            markup = types.InlineKeyboardMarkup()
+            markup.add(types.InlineKeyboardButton("🔄 Join Channel Again", url=CHANNEL_INVITE_LINK))
+            bot.send_message(
+                user_id, 
+                "❌ You left the channel. Your access has been revoked.\n\n"
+                "Please rejoin the channel to continue.",
+                reply_markup=markup
+            )
     except Exception as e:
         logger.error(f"Channel handler error: {e}")
 
 # ====================== COMMANDS ======================
+# (Keep the same /start, /post, /win from previous version)
+
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
@@ -291,11 +358,10 @@ def start(message):
         try:
             referrer_id = int(args[1][3:])
             if referrer_id != user_id and referrer_id in users_data:
-                data = users_data[referrer_id]
-                data["invites"] += 1
-                data["last_referral_date"] = datetime.now()
-                save_user(referrer_id, data)
-                bot.send_message(referrer_id, f"🎉 New referral! Total invites: {data['invites']}/5")
+                if users_data[user_id].get("referred_by") is None:
+                    users_data[user_id]["referred_by"] = referrer_id
+                    save_user(user_id, users_data[user_id])
+                    bot.send_message(referrer_id, f"📩 Someone used your referral link! They must join the channel for it to count.")
         except:
             pass
 
@@ -310,7 +376,6 @@ def start(message):
 @bot.message_handler(commands=['post'], func=lambda m: m.from_user.id == ADMIN_ID)
 def post_free_games(message):
     try:
-        # Extract caption
         if message.text and len(message.text.split()) > 1:
             text = message.text.split(maxsplit=1)[1]
         else:
@@ -319,17 +384,14 @@ def post_free_games(message):
         media = None
         media_type = None
 
-        # Check if this is a reply to a media message
         if message.reply_to_message:
             replied = message.reply_to_message
-            
             if replied.photo:
                 media = replied.photo[-1].file_id
                 media_type = "photo"
             elif replied.video:
                 media = replied.video.file_id
                 media_type = "video"
-
         elif message.photo:
             media = message.photo[-1].file_id
             media_type = "photo"
@@ -352,8 +414,6 @@ def post_free_games(message):
         })
 
         bot.reply_to(message, f"✅ Added **{media_type}** to Today's Free Games! Total: {len(today_free_games)}")
-
-        # === NOTIFY ALL USERS ===
         notify_all_users_about_new_game()
 
     except Exception as e:
@@ -492,8 +552,9 @@ def handle_keyboard(message):
 
     elif text == "📜 Previous Free Games":
         if free_games_posts:
-            bot.send_message(message.chat.id, "📜 **Previous Free Games**", parse_mode="Markdown")
-            for day_posts in free_games_posts[:5]:
+            bot.send_message(message.chat.id, f"📜 **Previous Free Games** ({len(free_games_posts)} days)", parse_mode="Markdown")
+            shown = 0
+            for day_posts in free_games_posts[:10]:   # Show up to 10 recent days
                 for post in day_posts:
                     try:
                         if post.get("media_type") == "photo" and post.get("media"):
@@ -503,16 +564,19 @@ def handle_keyboard(message):
                         else:
                             bot.send_message(message.chat.id, post.get("text"))
                         time.sleep(0.4)
+                        shown += 1
                     except:
                         pass
+                if shown > 30:   # Safety limit per button press
+                    break
         else:
             bot.send_message(message.chat.id, "No previous games yet.")
 
     elif text == "🏆 Referral Leaderboard":
-        sorted_users = sorted(users_data.items(), key=lambda x: x[1].get("invites", 0), reverse=True)
+        sorted_users = sorted(users_data.items(), key=lambda x: x[1].get("valid_invites", 0), reverse=True)
         lb = "🏆 **Top Referrers**\n\n"
         for i, (uid, data) in enumerate(sorted_users[:15], 1):
-            lb += f"{i}. User `{uid}` — **{data.get('invites', 0)}** invites\n"
+            lb += f"{i}. User `{uid}` — **{data.get('valid_invites', 0)}** invites\n"
         bot.send_message(message.chat.id, lb, parse_mode="Markdown")
 
     elif text == "💎 VIP Service 💯":
@@ -535,7 +599,6 @@ def callback_handler(call):
 
     elif call.data == "open_today_games":
         bot.answer_callback_query(call.id)
-        # Simulate keyboard button press
         temp_message = types.Message(
             message_id=0,
             from_user=call.from_user,
@@ -553,19 +616,29 @@ def check_access(user_id):
     if user_id == ADMIN_ID:
         return "full"
     if user_id not in users_data:
-        users_data[user_id] = {"joined_channel": False, "invites": 0, "last_referral_date": None, "access_granted_date": None}
+        users_data[user_id] = {
+            "joined_channel": False, 
+            "invites": 0, 
+            "valid_invites": 0,
+            "referred_by": None, 
+            "last_referral_date": None, 
+            "access_granted_date": None
+        }
         save_user(user_id, users_data[user_id])
+
     data = users_data[user_id]
     if not data.get("joined_channel"):
         return "channel"
+
     if data.get("access_granted_date"):
         if (datetime.now() - data["access_granted_date"]) <= timedelta(days=7):
             return "full"
         else:
-            data["invites"] = 0
+            data["valid_invites"] = 0
             data["access_granted_date"] = None
             save_user(user_id, data)
-    if data["invites"] >= 5:
+
+    if data.get("valid_invites", 0) >= 5:
         data["access_granted_date"] = datetime.now()
         save_user(user_id, data)
         return "full"
@@ -573,7 +646,7 @@ def check_access(user_id):
 
 # ====================== BOT START ======================
 if __name__ == "__main__":
-    logger.info("🤖 Bot starting with all features...")
+    logger.info("🤖 Bot starting with persistent archive + improved referral system...")
     try:
         bot.delete_webhook(drop_pending_updates=True)
         logger.info("Webhook cleared successfully")
