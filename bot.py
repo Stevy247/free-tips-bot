@@ -80,23 +80,15 @@ def load_data():
     conn = get_db_connection()
     cur = conn.cursor()
     try:
-        # Load users
         cur.execute("SELECT * FROM users")
         users_data = {row['user_id']: dict(row) for row in cur.fetchall()}
 
-        # Load today's free games
         cur.execute("SELECT media, media_type, text FROM today_free_games ORDER BY id")
         today_free_games = [dict(row) for row in cur.fetchall()]
 
-        # Load ALL archived previous games (sorted by day DESC)
-        cur.execute("""
-            SELECT day, posts 
-            FROM free_games_archive 
-            ORDER BY day DESC
-        """)
+        cur.execute("SELECT posts FROM free_games_archive ORDER BY day DESC")
         free_games_posts = [row['posts'] for row in cur.fetchall()]
 
-        # Load active won tickets
         cur.execute("""
             SELECT media, media_type, text 
             FROM won_tickets 
@@ -180,18 +172,13 @@ def daily_reset_check():
             conn = get_db_connection()
             cur = conn.cursor()
             try:
-                # Save today's games to archive (using Json adapter for safety)
                 cur.execute("""
                     INSERT INTO free_games_archive (day, posts) 
                     VALUES (%s, %s)
                     ON CONFLICT (day) DO UPDATE SET posts = EXCLUDED.posts
                 """, (last_daily_reset, Json(today_free_games)))
-                
                 conn.commit()
-                
-                # Add to in-memory list (newest first)
                 free_games_posts.insert(0, today_free_games[:])
-                
                 logger.info(f"✅ Archived {len(today_free_games)} posts for {last_daily_reset}")
                 bot.send_message(ADMIN_ID, f"✅ Daily reset completed. {len(today_free_games)} posts archived.")
             except Exception as e:
@@ -199,11 +186,8 @@ def daily_reset_check():
             finally:
                 cur.close()
                 conn.close()
-        
         today_free_games.clear()
         last_daily_reset = today
-
-# ... (notify_all_users_about_new_game, get_persistent_keyboard remain the same as previous version)
 
 def notify_all_users_about_new_game():
     if not today_free_games:
@@ -266,8 +250,6 @@ def get_persistent_keyboard():
     return markup
 
 # ====================== CHANNEL HANDLER ======================
-# (Keep the same improved channel handler from the previous full code I sent you)
-
 @bot.chat_member_handler()
 def handle_channel_update(update):
     try:
@@ -345,8 +327,6 @@ def handle_channel_update(update):
         logger.error(f"Channel handler error: {e}")
 
 # ====================== COMMANDS ======================
-# (Keep the same /start, /post, /win from previous version)
-
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
@@ -511,25 +491,21 @@ def handle_keyboard(message):
                         bot.send_message(message.chat.id, "⚠️ Could not display this post.")
             else:
                 bot.send_message(message.chat.id, "No free games today yet.")
-        
         else:
             current_referrals = get_user_referrals(user_id)
             needed = max(5 - current_referrals, 1)
-
             message_text = (
                 "❌ You don't have full access yet.\n\n"
                 "You need **5 friends** to get access to Free Games.\n\n"
                 f"👥 Friends referred so far: **{current_referrals}**\n"
                 f"🔜 You still need: **{needed}** more friend{'' if needed == 1 else 's'}"
             )
-
             markup = types.InlineKeyboardMarkup(row_width=1)
             share_button = types.InlineKeyboardButton(
                 text="🔗 Share with Friends",
                 url=f"https://t.me/share/url?url=https://t.me/{BOT_USERNAME}?start=ref{user_id}&text=Join%20me%20and%20unlock%20Free%20Games%20together!%20%F0%9F%8E%AE"
             )
             markup.add(share_button)
-
             bot.send_message(message.chat.id, message_text, parse_mode="Markdown", reply_markup=markup)
 
     elif text == "✅ Won Tickets":
@@ -554,7 +530,7 @@ def handle_keyboard(message):
         if free_games_posts:
             bot.send_message(message.chat.id, f"📜 **Previous Free Games** ({len(free_games_posts)} days)", parse_mode="Markdown")
             shown = 0
-            for day_posts in free_games_posts[:10]:   # Show up to 10 recent days
+            for day_posts in free_games_posts[:10]:
                 for post in day_posts:
                     try:
                         if post.get("media_type") == "photo" and post.get("media"):
@@ -567,7 +543,7 @@ def handle_keyboard(message):
                         shown += 1
                     except:
                         pass
-                if shown > 30:   # Safety limit per button press
+                if shown > 30:
                     break
         else:
             bot.send_message(message.chat.id, "No previous games yet.")
@@ -646,7 +622,7 @@ def check_access(user_id):
 
 # ====================== BOT START ======================
 if __name__ == "__main__":
-    logger.info("🤖 Bot starting with persistent archive + improved referral system...")
+    logger.info("🤖 Bot starting with ALL features + persistent archive + improved referral system...")
     try:
         bot.delete_webhook(drop_pending_updates=True)
         logger.info("Webhook cleared successfully")
