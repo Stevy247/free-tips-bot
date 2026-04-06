@@ -8,6 +8,7 @@ from telebot import types
 from collections import defaultdict
 import psycopg2
 from psycopg2.extras import DictCursor, Json
+import threading
 
 # ====================== CONFIG ======================
 TOKEN = os.getenv("TOKEN")
@@ -165,29 +166,68 @@ def clean_expired_won_tickets():
         conn.close()
 
 def daily_reset_check():
-    global last_daily_reset
-    today = datetime.now().date()
-    if today > last_daily_reset:
-        if today_free_games:
-            conn = get_db_connection()
-            cur = conn.cursor()
+    global last_daily_reset, today_free_games, free_games_posts
+
+    now = datetime.now()
+    today = now.date()
+
+    if today <= last_daily_reset:
+        return
+
+    # Archive old games if any exist
+    if today_free_games:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute("""
+                INSERT INTO free_games_archive (day, posts)
+                VALUES (%s, %s)
+                ON CONFLICT (day) DO UPDATE SET 
+                    posts = EXCLUDED.posts,
+                    created_at = CURRENT_TIMESTAMP
+            """, (last_daily_reset, Json(today_free_games)))
+            
+            conn.commit()
+            
+            free_games_posts.insert(0, today_free_games[:])
+            
+            logger.info(f"✅ Archived {len(today_free_games)} posts for day {last_daily_reset}")
+            
             try:
-                cur.execute("""
-                    INSERT INTO free_games_archive (day, posts) 
-                    VALUES (%s, %s)
-                    ON CONFLICT (day) DO UPDATE SET posts = EXCLUDED.posts
-                """, (last_daily_reset, Json(today_free_games)))
-                conn.commit()
-                free_games_posts.insert(0, today_free_games[:])
-                logger.info(f"✅ Archived {len(today_free_games)} posts for {last_daily_reset}")
-                bot.send_message(ADMIN_ID, f"✅ Daily reset completed. {len(today_free_games)} posts archived.")
-            except Exception as e:
-                logger.error(f"Archive error: {e}")
-            finally:
-                cur.close()
-                conn.close()
-        today_free_games.clear()
-        last_daily_reset = today
+                bot.send_message(ADMIN_ID, 
+                    f"✅ Daily reset completed.\n"
+                    f"📦 Archived {len(today_free_games)} free games for {last_daily_reset}")
+            except:
+                pass
+
+        except Exception as e:
+            logger.error(f"❌ Archive error: {e}")
+            try:
+                bot.send_message(ADMIN_ID, f"⚠️ Failed to archive daily games: {str(e)[:200]}")
+            except:
+                pass
+        finally:
+            cur.close()
+            conn.close()
+
+    # Reset for new day
+    today_free_games.clear()
+    last_daily_reset = today
+    logger.info(f"🔄 New day started: {today}. Today's games reset.")
+
+# Background thread to ensure daily reset runs reliably
+def background_daily_checker():
+    while True:
+        try:
+            daily_reset_check()
+        except Exception as e:
+            logger.error(f"Background reset error: {e}")
+        time.sleep(300)  # Check every 5 minutes
+
+# Start background thread
+reset_thread = threading.Thread(target=background_daily_checker, daemon=True)
+reset_thread.start()
+logger.info("🕒 Background daily reset checker started")
 
 def notify_all_users_about_new_game():
     if not today_free_games:
@@ -622,7 +662,7 @@ def check_access(user_id):
 
 # ====================== BOT START ======================
 if __name__ == "__main__":
-    logger.info("🤖 Bot starting with ALL features + persistent archive + improved referral system...")
+    logger.info("🤖 Bot starting with reliable daily archiving fix...")
     try:
         bot.delete_webhook(drop_pending_updates=True)
         logger.info("Webhook cleared successfully")
