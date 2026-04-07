@@ -148,11 +148,26 @@ def is_member_of_channel(user_id):
     except:
         return False
 
-def anti_spam(user_id, cooldown=3):
+# ====================== PER COMMAND ANTI-SPAM ======================
+COMMAND_COOLDOWNS = {
+    "today_games": 8,
+    "previous_games": 12,
+    "won_tickets": 8,
+    "leaderboard": 15,
+    "vip": 5,
+    "check_channel": 5
+}
+
+last_command_time = defaultdict(lambda: defaultdict(lambda: datetime.min))
+
+def anti_spam_per_command(user_id, command_key):
     now = datetime.now()
-    if (now - last_action_time[user_id]) < timedelta(seconds=cooldown):
+    cooldown = COMMAND_COOLDOWNS.get(command_key, 5)
+    
+    if (now - last_command_time[user_id][command_key]) < timedelta(seconds=cooldown):
         return False
-    last_action_time[user_id] = now
+    
+    last_command_time[user_id][command_key] = now
     return True
 
 def clean_expired_won_tickets():
@@ -174,7 +189,7 @@ def daily_reset_check():
     if today <= last_daily_reset:
         return
 
-    # Archive old games if any exist
+    archived = False
     if today_free_games:
         conn = get_db_connection()
         cur = conn.cursor()
@@ -188,8 +203,8 @@ def daily_reset_check():
             """, (last_daily_reset, Json(today_free_games)))
             
             conn.commit()
-            
             free_games_posts.insert(0, today_free_games[:])
+            archived = True
             
             logger.info(f"✅ Archived {len(today_free_games)} posts for day {last_daily_reset}")
             
@@ -203,28 +218,31 @@ def daily_reset_check():
         except Exception as e:
             logger.error(f"❌ Archive error: {e}")
             try:
-                bot.send_message(ADMIN_ID, f"⚠️ Failed to archive daily games: {str(e)[:200]}")
+                bot.send_message(ADMIN_ID, f"⚠️ Failed to archive daily games:\n{str(e)[:300]}")
             except:
                 pass
         finally:
             cur.close()
             conn.close()
 
-    # Reset for new day
+    # Always clear today's games on new day (even if archive failed)
     today_free_games.clear()
     last_daily_reset = today
-    logger.info(f"🔄 New day started: {today}. Today's games reset.")
+    
+    if archived:
+        logger.info(f"🔄 New day started: {today}. Today's games archived and reset.")
+    else:
+        logger.info(f"🔄 New day started: {today}. Today's games reset (archive skipped).")
 
-# Background thread to ensure daily reset runs reliably
+# Background thread
 def background_daily_checker():
     while True:
         try:
             daily_reset_check()
         except Exception as e:
             logger.error(f"Background reset error: {e}")
-        time.sleep(300)  # Check every 5 minutes
+        time.sleep(300)
 
-# Start background thread
 reset_thread = threading.Thread(target=background_daily_checker, daemon=True)
 reset_thread.start()
 logger.info("🕒 Background daily reset checker started")
@@ -508,12 +526,13 @@ def handle_keyboard(message):
     daily_reset_check()
     clean_expired_won_tickets()
 
-    if not anti_spam(user_id):
-        return
-
     access = check_access(user_id)
 
     if text == "🎮 Today's Free Games":
+        if not anti_spam_per_command(user_id, "today_games"):
+            bot.send_message(message.chat.id, "⏳ Please wait a few seconds before using this again.")
+            return
+
         if access == "full":
             if today_free_games:
                 bot.send_message(message.chat.id, f"🎮 **Today's Free Games** ({len(today_free_games)})", parse_mode="Markdown")
@@ -549,6 +568,10 @@ def handle_keyboard(message):
             bot.send_message(message.chat.id, message_text, parse_mode="Markdown", reply_markup=markup)
 
     elif text == "✅ Won Tickets":
+        if not anti_spam_per_command(user_id, "won_tickets"):
+            bot.send_message(message.chat.id, "⏳ Please wait a few seconds before using this again.")
+            return
+
         if won_tickets:
             bot.send_message(message.chat.id, f"✅ **Won Tickets** ({len(won_tickets)} active)", parse_mode="Markdown")
             for post in won_tickets:
@@ -567,6 +590,10 @@ def handle_keyboard(message):
             bot.send_message(message.chat.id, "No winning tickets yet.")
 
     elif text == "📜 Previous Free Games":
+        if not anti_spam_per_command(user_id, "previous_games"):
+            bot.send_message(message.chat.id, "⏳ Please wait a few seconds before using this again.")
+            return
+
         if free_games_posts:
             bot.send_message(message.chat.id, f"📜 **Previous Free Games** ({len(free_games_posts)} days)", parse_mode="Markdown")
             shown = 0
@@ -589,6 +616,10 @@ def handle_keyboard(message):
             bot.send_message(message.chat.id, "No previous games yet.")
 
     elif text == "🏆 Referral Leaderboard":
+        if not anti_spam_per_command(user_id, "leaderboard"):
+            bot.send_message(message.chat.id, "⏳ Please wait a few seconds before using this again.")
+            return
+
         sorted_users = sorted(users_data.items(), key=lambda x: x[1].get("valid_invites", 0), reverse=True)
         lb = "🏆 **Top Referrers**\n\n"
         for i, (uid, data) in enumerate(sorted_users[:15], 1):
@@ -596,6 +627,10 @@ def handle_keyboard(message):
         bot.send_message(message.chat.id, lb, parse_mode="Markdown")
 
     elif text == "💎 VIP Service 💯":
+        if not anti_spam_per_command(user_id, "vip"):
+            bot.send_message(message.chat.id, "⏳ Please wait a few seconds before using this again.")
+            return
+
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("💬 Contact Admin", url=f"https://t.me/{VIP_USERNAME}"))
         bot.send_message(message.chat.id, "💎 Want VIP Service?\nContact Admin for premium access.", reply_markup=markup)
@@ -606,6 +641,10 @@ def callback_handler(call):
     user_id = call.from_user.id
     
     if call.data == "check_channel":
+        if not anti_spam_per_command(user_id, "check_channel"):
+            bot.answer_callback_query(call.id, "⏳ Please wait before trying again.", show_alert=True)
+            return
+
         if is_member_of_channel(user_id):
             users_data[user_id]["joined_channel"] = True
             save_user(user_id, users_data[user_id])
@@ -662,7 +701,7 @@ def check_access(user_id):
 
 # ====================== BOT START ======================
 if __name__ == "__main__":
-    logger.info("🤖 Bot starting with reliable daily archiving fix...")
+    logger.info("🤖 Bot starting with fixed archiving...")
     try:
         bot.delete_webhook(drop_pending_updates=True)
         logger.info("Webhook cleared successfully")
